@@ -37,13 +37,9 @@ body {
 }
 
 .auth-panel {
-  min-height: 100vh;
   display: flex;
-  align-items: center;
   justify-content: center;
-  padding: 2rem;
-  background: radial-gradient(circle at top, rgba(196, 210, 255, 0.5), transparent 45%),
-    var(--page-bg);
+  width: 100%;
 }
 
 .auth-card {
@@ -56,6 +52,21 @@ body {
   flex-direction: column;
   gap: 1.25rem;
   border: 1px solid rgba(226, 232, 240, 0.8);
+  position: relative;
+}
+
+.auth-close-btn {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  border: none;
+  background: rgba(226, 232, 240, 0.8);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--muted);
 }
 
 .auth-header h1 {
@@ -112,6 +123,11 @@ body {
   margin-bottom: -0.5rem;
 }
 
+.topbar-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .user-chip {
   display: flex;
   align-items: center;
@@ -134,10 +150,25 @@ body {
   font-weight: 700;
 }
 
+.user-chip.guest {
+  background: rgba(255, 255, 255, 0.9);
+  border-style: dashed;
+}
+
 .user-chip p {
   margin: 0;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.primary-outline-btn {
+  padding: 0.75rem 1.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--primary);
+  background: transparent;
+  color: var(--primary);
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .sidebar {
@@ -216,6 +247,18 @@ body {
   margin: 0;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.guest-conversation-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: 16px;
+  border: 1px dashed rgba(148, 163, 184, 0.7);
+  background: rgba(248, 250, 255, 0.85);
+  color: var(--muted);
+  text-align: center;
 }
 
 .sidebar h2 {
@@ -369,6 +412,24 @@ body {
   color: var(--muted);
 }
 
+.guest-banner {
+  margin: 1rem 0;
+  padding: 0.85rem 1rem;
+  border-radius: 16px;
+  border: 1px dashed rgba(148, 163, 184, 0.8);
+  background: rgba(248, 250, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.guest-banner button {
+  white-space: nowrap;
+}
+
 .select-label {
   display: flex;
   flex-direction: column;
@@ -396,6 +457,21 @@ body {
 .ollama-status.ok {
   background: #ecfdf5;
   color: #047857;
+}
+
+.auth-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 1rem;
+}
+
+.auth-modal {
+  width: min(480px, 100%);
 }
 
 .ollama-status.warn {

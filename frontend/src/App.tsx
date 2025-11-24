@@ -93,23 +93,40 @@ function App() {
   const [stats, setStats] = useState<StatsSnapshot>(INITIAL_STATS);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [guestConversationId, setGuestConversationId] = useState(() => crypto.randomUUID());
+  const isGuestMode = !isAuthenticated;
+  const sessionConversationId = isGuestMode ? guestConversationId : activeConversationId;
+  const [showAuthPanel, setShowAuthPanel] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated) {
       setConversations([]);
       setActiveConversationId(null);
-       setConversationLoading(false);
+      setConversationLoading(false);
       setManualStats(null);
       setMessages([]);
       setScenario(null);
       setEvaluation(null);
       setMessagesLoading(false);
-      return;
+      setGuestConversationId(crypto.randomUUID());
+    } else {
+      setShowAuthPanel(false);
     }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
     fetchOllamaStatus()
       .then(setOllamaStatus)
       .catch(() => setOllamaStatus({ connected: false, error: '연결 실패' }));
-  }, [isAuthenticated]);
+  }, []);
+
+  const handleRequestAuth = useCallback(() => {
+    setShowAuthPanel(true);
+  }, []);
+
+  const handleCloseAuthPanel = useCallback(() => {
+    setShowAuthPanel(false);
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -257,7 +274,7 @@ function App() {
   );
 
   const touchActiveConversation = useCallback(() => {
-    if (!activeConversationId) return;
+    if (!isAuthenticated || !activeConversationId) return;
     const timestamp = new Date().toISOString();
     setConversations((prev) =>
       sortConversationsByUpdated(
@@ -266,7 +283,7 @@ function App() {
         ),
       ),
     );
-  }, [activeConversationId]);
+  }, [activeConversationId, isAuthenticated]);
 
   const handleSelectConversation = useCallback((conversationId: string) => {
     setActiveConversationId(conversationId);
@@ -324,18 +341,23 @@ function App() {
   }, []);
 
   const handleManualUpload = async (files: File[], ratio: number) => {
-    if (!activeConversationId) {
+    const targetConversationId = sessionConversationId;
+    if (!targetConversationId) {
       setError('대화를 선택하거나 생성한 후 매뉴얼을 업로드하세요.');
       return;
     }
     setUploading(true);
     setError(null);
     try {
-      const result = await uploadManuals(activeConversationId, files, ratio);
+      const result = await uploadManuals(targetConversationId, files, ratio, undefined, {
+        guest: isGuestMode,
+      });
       setManualStats(result);
       setRole(null);
       resetSession();
-      touchActiveConversation();
+      if (!isGuestMode) {
+        touchActiveConversation();
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -350,8 +372,8 @@ function App() {
   }, [manualStats]);
 
   const startRole = async (nextRole: Role) => {
-    if (!activeConversationId) {
-      setError('먼저 대화를 선택하세요.');
+    if (!sessionConversationId) {
+      setError('대화 세션을 준비하는 중입니다. 잠시 후 다시 시도하세요.');
       return;
     }
     try {
@@ -371,10 +393,16 @@ function App() {
     if (nextRole === 'employee') {
       setLoadingResponse(true);
       try {
-        const scenarioData = await generateScenario(activeConversationId, providerConfig);
+        const scenarioData = await generateScenario(
+          sessionConversationId,
+          providerConfig,
+          { guest: isGuestMode },
+        );
         setScenario(scenarioData);
         addAssistantMessage(scenarioData.firstMessage, nextRole);
-        touchActiveConversation();
+        if (!isGuestMode) {
+          touchActiveConversation();
+        }
       } catch (err) {
         setError((err as Error).message);
       } finally {
@@ -384,7 +412,7 @@ function App() {
   };
 
   const handleSendMessage = async (text: string) => {
-    if (!role || !text.trim() || !activeConversationId) return;
+    if (!role || !text.trim() || !sessionConversationId) return;
     setError(null);
     const userMessage = createMessage(role, text);
     appendMessage(userMessage);
@@ -392,10 +420,20 @@ function App() {
 
     try {
       if (role === 'customer') {
-        const response = await respondAsCustomer(activeConversationId, text, providerConfig);
+        const response = await respondAsCustomer(
+          sessionConversationId,
+          text,
+          providerConfig,
+          { guest: isGuestMode },
+        );
         addAssistantMessage(response.aiResponse, role);
       } else {
-        const response = await respondAsEmployee(activeConversationId, text, providerConfig);
+        const response = await respondAsEmployee(
+          sessionConversationId,
+          text,
+          providerConfig,
+          { guest: isGuestMode },
+        );
         setEvaluation(response.evaluation);
         setScenario(response.nextScenario);
         if (response.nextCustomerMessage) {
@@ -407,7 +445,9 @@ function App() {
           totalScore: prev.totalScore + response.evaluation.score,
         }));
       }
-      touchActiveConversation();
+      if (!isGuestMode) {
+        touchActiveConversation();
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -439,12 +479,26 @@ function App() {
     );
   }, [role, scenario]);
 
-  if (!isAuthenticated || !user) {
-    return <AuthPanel />;
-  }
-
   return (
-    <div className="app-shell">
+    <>
+      {showAuthPanel && (
+        <div
+          className="auth-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={handleCloseAuthPanel}
+        >
+          <div
+            className="auth-modal"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <AuthPanel onClose={handleCloseAuthPanel} />
+          </div>
+        </div>
+      )}
+      <div className="app-shell">
       <SidebarSettings
         onManualUpload={handleManualUpload}
         uploading={uploading}
@@ -462,25 +516,50 @@ function App() {
         onCreateConversation={handleCreateConversation}
         onRenameConversation={handleRenameConversation}
         onDeleteConversation={handleDeleteConversation}
+          isGuestMode={isGuestMode}
+          onRequestAuth={handleRequestAuth}
       />
       <main className="main-panel">
         <div className="auth-topbar">
-          <div className="user-chip">
-            <span className="user-avatar">{user.displayName.slice(0, 1).toUpperCase()}</span>
+            <div className={`user-chip ${isGuestMode ? 'guest' : ''}`}>
+              <span className="user-avatar">
+                {((isGuestMode ? 'G' : user?.displayName?.slice(0, 1)) ?? 'U').toUpperCase()}
+              </span>
             <div>
-              <strong>{user.displayName}</strong>
-              <p>{user.email}</p>
+                <strong>{isGuestMode ? '게스트 모드' : user?.displayName}</strong>
+                <p>
+                  {isGuestMode
+                    ? '로그인 시 대화와 업로드 내역이 저장됩니다.'
+                    : user?.email}
+                </p>
             </div>
           </div>
-          <button type="button" className="ghost-btn" onClick={logout}>
-            🔓 로그아웃
-          </button>
+            <div className="topbar-actions">
+              {isGuestMode ? (
+                <button type="button" className="primary-outline-btn" onClick={handleRequestAuth}>
+                  🔐 로그인 / 회원가입
+                </button>
+              ) : (
+                <button type="button" className="ghost-btn" onClick={logout}>
+                  🔓 로그아웃
+                </button>
+              )}
+            </div>
         </div>
         <header className="hero">
           <span className="hero-badge">🚀 AI 기반 고객 응대 실전 연습</span>
           <h1>🍑 실전형 업무 시뮬레이터 for 신입</h1>
           <p>업무 매뉴얼을 업로드하고 역할별 시나리오를 반복 연습하며 피드백으로 역량을 높이세요.</p>
         </header>
+
+          {isGuestMode && (
+            <div className="guest-banner">
+              <span>현재 게스트 모드입니다. 페이지를 새로고침하면 대화와 업로드한 파일이 초기화됩니다.</span>
+              <button type="button" className="link-btn" onClick={handleRequestAuth}>
+                로그인하고 저장하기
+              </button>
+            </div>
+          )}
 
         {error && <div className="error-banner">{error}</div>}
 
@@ -565,8 +644,9 @@ function App() {
             </div>
           </section>
         )}
-      </main>
-    </div>
+        </main>
+      </div>
+    </>
   );
 }
 

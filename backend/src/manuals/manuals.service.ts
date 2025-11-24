@@ -64,13 +64,15 @@ export class ManualsService implements OnModuleInit {
   async ingest(
     files: Express.Multer.File[] = [],
     dto: ManualIngestRequestDto,
-    user: AuthUser,
+    user?: AuthUser | null,
   ) {
     const conversationId = dto.conversationId?.trim();
     if (!conversationId) {
       throw new BadRequestException('conversationId is required.');
     }
-    this.conversationsService.getConversationOrThrow(conversationId, user.id);
+    if (user) {
+      this.conversationsService.getConversationOrThrow(conversationId, user.id);
+    }
     const sections: string[] = [];
     for (const file of files) {
       const text = await this.extractText(file);

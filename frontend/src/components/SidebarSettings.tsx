@@ -45,6 +45,8 @@ type Props = {
   onCreateConversation: (title?: string) => Promise<void>;
   onRenameConversation: (conversationId: string, title: string) => Promise<void>;
   onDeleteConversation: (conversationId: string) => Promise<void>;
+  isGuestMode: boolean;
+  onRequestAuth?: () => void;
 };
 
 export function SidebarSettings({
@@ -64,6 +66,8 @@ export function SidebarSettings({
   onCreateConversation,
   onRenameConversation,
   onDeleteConversation,
+  isGuestMode,
+  onRequestAuth,
 }: Props) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -205,20 +209,23 @@ export function SidebarSettings({
     onProviderConfigChange({ ...providerConfig, apiKey: event.target.value });
   };
 
-  return (
-    <aside className="sidebar">
-      <div className="sidebar-section conversation-section">
-        <div className="conversation-header">
-          <h2>💬 대화 목록</h2>
+  const renderConversationSection = () => {
+    if (isGuestMode) {
+      return (
+        <div className="guest-conversation-placeholder">
+          <p>게스트 모드에서는 대화와 업로드 이력이 저장되지 않습니다.</p>
           <button
             type="button"
             className="ghost-btn"
-            onClick={handleCreateConversation}
-            disabled={conversationLoading || conversationActionLoading}
+            onClick={() => onRequestAuth?.()}
           >
-            ➕ 새 대화
+            🔐 로그인하고 저장하기
           </button>
         </div>
+      );
+    }
+    return (
+      <>
         <div className="conversation-list">
           {conversationLoading && !conversations.length ? (
             <p className="conversation-placeholder">대화를 불러오는 중...</p>
@@ -275,6 +282,27 @@ export function SidebarSettings({
           )}
         </div>
         {conversationError && <p className="error-text">{conversationError}</p>}
+      </>
+    );
+  };
+
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-section conversation-section">
+        <div className="conversation-header">
+          <h2>💬 대화 목록</h2>
+          {!isGuestMode && (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={handleCreateConversation}
+              disabled={conversationLoading || conversationActionLoading}
+            >
+              ➕ 새 대화
+            </button>
+          )}
+        </div>
+        {renderConversationSection()}
       </div>
 
       <div className="sidebar-section">

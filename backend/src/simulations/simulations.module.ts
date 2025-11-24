@@ -7,6 +7,7 @@ import { EmbeddingsModule } from '../embeddings/embeddings.module';
 import { LlmModule } from '../llm/llm.module';
 import { ConversationsModule } from '../conversations/conversations.module';
 import { AuthModule } from '../auth/auth.module';
+import { GuestSimulationsController } from './guest-simulations.controller';
 
 @Module({
   imports: [
@@ -17,7 +18,7 @@ import { AuthModule } from '../auth/auth.module';
     ConversationsModule,
     AuthModule,
   ],
-  controllers: [SimulationsController],
+  controllers: [SimulationsController, GuestSimulationsController],
   providers: [SimulationsService],
 })
 export class SimulationsModule {}

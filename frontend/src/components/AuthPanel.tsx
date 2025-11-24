@@ -2,7 +2,11 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useAuth } from '../context/AuthContext';
 
-export function AuthPanel() {
+type AuthPanelProps = {
+  onClose?: () => void;
+};
+
+export function AuthPanel({ onClose }: AuthPanelProps) {
   const { login, register, loading } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
@@ -31,10 +35,15 @@ export function AuthPanel() {
   return (
     <div className="auth-panel">
       <div className="auth-card">
+        {onClose && (
+          <button type="button" className="auth-close-btn" onClick={onClose} aria-label="닫기">
+            ✕
+          </button>
+        )}
         <div className="auth-header">
           <span className="hero-badge">🔐 보안 로그인</span>
           <h1>🍑 실전형 업무 시뮬레이터</h1>
-          <p>먼저 계정을 생성하거나 로그인해 개인화된 시뮬레이션을 시작하세요.</p>
+          <p>계정을 연결하면 대화 기록과 업로드한 매뉴얼을 안전하게 저장할 수 있습니다.</p>
         </div>
         <form className="auth-form" onSubmit={handleSubmit}>
           {error && <div className="error-banner">{error}</div>}

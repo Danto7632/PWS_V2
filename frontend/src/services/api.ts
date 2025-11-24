@@ -78,11 +78,16 @@ type EmployeeResponse = {
   context: string[];
 };
 
+type GuestOptions = {
+  guest?: boolean;
+};
+
 export async function uploadManuals(
   conversationId: string,
   files: File[],
   embedRatio: number,
   instructionText?: string,
+  options?: GuestOptions,
 ): Promise<ManualStats> {
   const formData = new FormData();
   files.forEach((file) => formData.append('files', file));
@@ -91,20 +96,29 @@ export async function uploadManuals(
   if (instructionText?.trim()) {
     formData.append('instructionText', instructionText.trim());
   }
-  return request<ManualStats>('/api/manuals', {
+  const guest = Boolean(options?.guest);
+  const path = guest ? '/api/guest/manuals' : '/api/manuals';
+  return request<ManualStats>(path, {
     method: 'POST',
     body: formData,
+    auth: !guest,
   });
 }
 
 export async function generateScenario(
   conversationId: string,
   providerConfig: ProviderConfig,
+  options?: GuestOptions,
 ): Promise<Scenario> {
-  return request<Scenario>('/api/simulations/scenario', {
+  const guest = Boolean(options?.guest);
+  const path = guest
+    ? '/api/guest/simulations/scenario'
+    : '/api/simulations/scenario';
+  return request<Scenario>(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ conversationId, providerConfig }),
+    auth: !guest,
   });
 }
 
@@ -112,11 +126,17 @@ export async function respondAsCustomer(
   conversationId: string,
   message: string,
   providerConfig: ProviderConfig,
+  options?: GuestOptions,
 ): Promise<CustomerResponse> {
-  return request<CustomerResponse>('/api/simulations/customer/respond', {
+  const guest = Boolean(options?.guest);
+  const path = guest
+    ? '/api/guest/simulations/customer/respond'
+    : '/api/simulations/customer/respond';
+  return request<CustomerResponse>(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ conversationId, message, providerConfig }),
+    auth: !guest,
   });
 }
 
@@ -124,11 +144,17 @@ export async function respondAsEmployee(
   conversationId: string,
   message: string,
   providerConfig: ProviderConfig,
+  options?: GuestOptions,
 ): Promise<EmployeeResponse> {
-  return request<EmployeeResponse>('/api/simulations/employee/respond', {
+  const guest = Boolean(options?.guest);
+  const path = guest
+    ? '/api/guest/simulations/employee/respond'
+    : '/api/simulations/employee/respond';
+  return request<EmployeeResponse>(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ conversationId, message, providerConfig }),
+    auth: !guest,
   });
 }
 

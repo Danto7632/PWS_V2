@@ -26,9 +26,11 @@ export class SimulationsService {
   async generateScenario(
     conversationId: string,
     providerConfig: ProviderConfigDto,
-    user: AuthUser,
+    user?: AuthUser | null,
   ): Promise<Scenario> {
-    this.conversationsService.getConversationOrThrow(conversationId, user.id);
+    if (user) {
+      this.conversationsService.getConversationOrThrow(conversationId, user.id);
+    }
     const manual = await this.manualsService.getManualOrThrow(conversationId);
     const prompt = `당신은 아래 매뉴얼에 나오는 서비스/업무의 고객 또는 사용자입니다.
 
@@ -44,7 +46,7 @@ ${manual.manualText.slice(0, 1500)}
 
     const response = await this.llmService.call(prompt, providerConfig);
     const scenario = parseScenario(response);
-    if (scenario.firstMessage) {
+    if (scenario.firstMessage && user) {
       this.conversationsService.appendMessage(
         conversationId,
         'customer',
@@ -59,15 +61,17 @@ ${manual.manualText.slice(0, 1500)}
     conversationId: string,
     message: string,
     providerConfig: ProviderConfigDto,
-    user: AuthUser,
+    user?: AuthUser | null,
   ) {
-    this.conversationsService.getConversationOrThrow(conversationId, user.id);
-    this.conversationsService.appendMessage(
-      conversationId,
-      'customer',
-      message,
-      user.id,
-    );
+    if (user) {
+      this.conversationsService.getConversationOrThrow(conversationId, user.id);
+      this.conversationsService.appendMessage(
+        conversationId,
+        'customer',
+        message,
+        user.id,
+      );
+    }
     const manual = await this.manualsService.getManualOrThrow(conversationId);
     const context = await this.buildContext(conversationId, message);
     const contextText = context.join('\n');
@@ -83,11 +87,13 @@ ${contextText || manual.manualText.slice(0, 1200)}
     const aiResponse = (
       await this.llmService.call(prompt, providerConfig)
     ).trim();
-    this.conversationsService.appendMessage(
-      conversationId,
-      'employee',
-      aiResponse,
-    );
+    if (user) {
+      this.conversationsService.appendMessage(
+        conversationId,
+        'employee',
+        aiResponse,
+      );
+    }
     return {
       aiResponse,
       context,
@@ -98,15 +104,17 @@ ${contextText || manual.manualText.slice(0, 1200)}
     conversationId: string,
     message: string,
     providerConfig: ProviderConfigDto,
-    user: AuthUser,
+    user?: AuthUser | null,
   ) {
-    this.conversationsService.getConversationOrThrow(conversationId, user.id);
-    this.conversationsService.appendMessage(
-      conversationId,
-      'employee',
-      message,
-      user.id,
-    );
+    if (user) {
+      this.conversationsService.getConversationOrThrow(conversationId, user.id);
+      this.conversationsService.appendMessage(
+        conversationId,
+        'employee',
+        message,
+        user.id,
+      );
+    }
     const manual = await this.manualsService.getManualOrThrow(conversationId);
     const context = await this.buildContext(conversationId, message);
     const contextText = context.join('\n');
