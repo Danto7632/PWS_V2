@@ -1,7 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
-import type { ChangeEvent, DragEvent, FormEvent } from 'react';
+import { useMemo, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import type {
-  ManualStats,
   ProviderConfig,
   StatsSnapshot,
   OllamaStatus,
@@ -29,13 +28,8 @@ const GEMINI_MODELS = [
 ];
 
 type Props = {
-  onManualUpload: (files: File[], embedRatio: number) => Promise<void>;
-  uploading: boolean;
-  manualStats: ManualStats | null;
   providerConfig: ProviderConfig;
   onProviderConfigChange: (config: ProviderConfig) => void;
-  embedRatio: number;
-  onEmbedRatioChange: (value: number) => void;
   stats: StatsSnapshot;
   ollamaStatus: OllamaStatus | null;
   conversations: ConversationSummary[];
@@ -50,13 +44,8 @@ type Props = {
 };
 
 export function SidebarSettings({
-  onManualUpload,
-  uploading,
-  manualStats,
   providerConfig,
   onProviderConfigChange,
-  embedRatio,
-  onEmbedRatioChange,
   stats,
   ollamaStatus,
   conversations,
@@ -69,11 +58,8 @@ export function SidebarSettings({
   isGuestMode,
   onRequestAuth,
 }: Props) {
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [conversationError, setConversationError] = useState<string | null>(null);
   const [conversationActionLoading, setConversationActionLoading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const ollamaModels = useMemo(() => {
     if (ollamaStatus?.connected && ollamaStatus.models?.length) {
@@ -92,27 +78,6 @@ export function SidebarSettings({
         return ollamaModels;
     }
   }, [providerConfig.provider, ollamaModels]);
-
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files) {
-      setSelectedFiles([]);
-      return;
-    }
-    setSelectedFiles(Array.from(files));
-  };
-
-  const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
-    event.preventDefault();
-    if (uploading) return;
-    const files = Array.from(event.dataTransfer.files);
-    if (!files.length) return;
-    setSelectedFiles(files);
-  };
-
-  const openFilePicker = () => {
-    fileInputRef.current?.click();
-  };
 
   const handleConversationError = (err: unknown) => {
     setConversationError((err as Error).message ?? '대화 작업 중 오류가 발생했습니다.');
@@ -160,29 +125,6 @@ export function SidebarSettings({
       handleConversationError(err);
     } finally {
       setConversationActionLoading(false);
-    }
-  };
-
-  const resetSelection = () => {
-    setSelectedFiles([]);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    setError(null);
-    if (!selectedFiles.length) {
-      setError('업로드할 파일을 선택해주세요.');
-      return;
-    }
-    try {
-      await onManualUpload(selectedFiles, embedRatio);
-      resetSelection();
-      (event.target as HTMLFormElement).reset();
-    } catch (err) {
-      setError((err as Error).message);
     }
   };
 
@@ -303,72 +245,6 @@ export function SidebarSettings({
           )}
         </div>
         {renderConversationSection()}
-      </div>
-
-      <div className="sidebar-section">
-        <h2>📚 업무 매뉴얼 업로드</h2>
-        <form onSubmit={handleSubmit} className="upload-form">
-          <label
-            className="file-dropzone"
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={handleDrop}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept=".pdf,.txt,.xls,.xlsx"
-              onChange={handleFileChange}
-              disabled={uploading}
-              className="sr-only"
-            />
-            <div className="file-dropzone__body">
-              <p>Drag and drop files here</p>
-              <span>Limit 200MB per file · PDF, TXT, Excel</span>
-              <button
-                type="button"
-                className="file-browse-btn"
-                onClick={(event) => {
-                  event.preventDefault();
-                  openFilePicker();
-                }}
-                disabled={uploading}
-              >
-                Browse files
-              </button>
-            </div>
-          </label>
-          {selectedFiles.length > 0 && (
-            <ul className="selected-files">
-              {selectedFiles.map((file) => (
-                <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>
-              ))}
-            </ul>
-          )}
-          <label className="slider-label">
-            임베딩 학습 수준: {Math.round(embedRatio * 100)}%
-            <input
-              type="range"
-              min={0.2}
-              max={1}
-              step={0.1}
-              value={embedRatio}
-              onChange={(event) => onEmbedRatioChange(Number(event.target.value))}
-              disabled={uploading}
-            />
-          </label>
-          <button type="submit" className="primary-btn" disabled={uploading}>
-            {uploading ? '학습 중...' : '매뉴얼 학습 시작'}
-          </button>
-          {error && <p className="error-text">{error}</p>}
-          {manualStats && (
-            <div className="manual-summary">
-              <p>파일: {manualStats.fileCount}개</p>
-              <p>생성된 청크: {manualStats.chunkCount}개</p>
-              <p>임베딩 적용: {manualStats.embeddedChunks}개</p>
-            </div>
-          )}
-        </form>
       </div>
 
       <div className="sidebar-section">

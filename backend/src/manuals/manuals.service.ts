@@ -23,6 +23,18 @@ export interface ManualCacheRecord {
   updatedAt: string;
 }
 
+export interface ManualSummary {
+  fileCount: number;
+  chunkCount: number;
+  embeddedChunks: number;
+  updatedAt: string;
+}
+
+export interface ManualStatusPayload {
+  hasManual: boolean;
+  stats?: ManualSummary;
+}
+
 async function parsePdfBuffer(buffer: Buffer): Promise<string> {
   const { PDFParse } = await importPdfParse();
   const parser = new PDFParse({ data: buffer });
@@ -65,7 +77,7 @@ export class ManualsService implements OnModuleInit {
     files: Express.Multer.File[] = [],
     dto: ManualIngestRequestDto,
     user?: AuthUser | null,
-  ) {
+  ): Promise<ManualSummary> {
     const conversationId = dto.conversationId?.trim();
     if (!conversationId) {
       throw new BadRequestException('conversationId is required.');
@@ -112,15 +124,16 @@ export class ManualsService implements OnModuleInit {
       chunksToUse,
       embeddings,
     );
+    const updatedAt = new Date().toISOString();
     await this.persistManual(conversationId, {
       manualText,
       chunkCount: chunks.length,
       embeddedChunks: chunksToUse.length,
       fileCount: files.length,
-      updatedAt: new Date().toISOString(),
+      updatedAt,
     });
 
-    const timestamp = new Date().toISOString();
+    const timestamp = updatedAt;
     try {
       const conversationExists = this.db.get<{ id: string }>(
         'SELECT id FROM conversations WHERE id = ? LIMIT 1',
@@ -156,6 +169,7 @@ export class ManualsService implements OnModuleInit {
       fileCount: files.length,
       chunkCount: chunks.length,
       embeddedChunks: chunksToUse.length,
+      updatedAt,
     };
   }
 
@@ -170,6 +184,32 @@ export class ManualsService implements OnModuleInit {
   async hasManual(conversationId: string) {
     const manual = await this.readManualFile(conversationId);
     return Boolean(manual?.manualText.trim());
+  }
+
+  async getManualStatusForUser(
+    conversationId: string,
+    user: AuthUser,
+  ): Promise<ManualStatusPayload> {
+    this.conversationsService.getConversationOrThrow(conversationId, user.id);
+    const record = await this.readManualFile(conversationId);
+    if (!record) {
+      return { hasManual: false };
+    }
+    return {
+      hasManual: true,
+      stats: this.toSummary(record),
+    };
+  }
+
+  async getManualStatus(conversationId: string): Promise<ManualStatusPayload> {
+    const record = await this.readManualFile(conversationId);
+    if (!record) {
+      return { hasManual: false };
+    }
+    return {
+      hasManual: true,
+      stats: this.toSummary(record),
+    };
   }
 
   private async persistManual(
@@ -193,6 +233,11 @@ export class ManualsService implements OnModuleInit {
       }
       return null;
     }
+  }
+
+  private toSummary(record: ManualCacheRecord): ManualSummary {
+    const { fileCount, chunkCount, embeddedChunks, updatedAt } = record;
+    return { fileCount, chunkCount, embeddedChunks, updatedAt };
   }
 
   private async extractText(file: Express.Multer.File): Promise<string> {

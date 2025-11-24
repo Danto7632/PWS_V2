@@ -1,24 +1,28 @@
 import {
   Body,
   Controller,
+  Get,
+  Param,
   Post,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { ManualsService } from './manuals.service';
+import { ManualsService, ManualStatusPayload } from './manuals.service';
 import { ManualIngestRequestDto } from './dto/manual-request.dto';
 import {
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../auth/auth.types';
+import { ManualStatusResponseDto } from './dto/manual-status.dto';
 
 @ApiTags('Manuals')
 @Controller('api/manuals')
@@ -70,5 +74,20 @@ export class ManualsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.manualsService.ingest(files, body, user);
+  }
+
+  @Get(':conversationId/status')
+  @ApiOperation({ summary: '대화의 매뉴얼 학습 상태 조회' })
+  @ApiOkResponse({ type: ManualStatusResponseDto })
+  async getStatus(
+    @Param('conversationId') conversationId: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ManualStatusResponseDto> {
+    const status: ManualStatusPayload =
+      await this.manualsService.getManualStatusForUser(conversationId, user);
+    return {
+      hasManual: status.hasManual,
+      stats: status.stats,
+    };
   }
 }

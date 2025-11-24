@@ -1,14 +1,23 @@
 import {
   Body,
   Controller,
+  Get,
+  Param,
   Post,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { ManualsService } from './manuals.service';
+import {
+  ApiBody,
+  ApiConsumes,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
+import { ManualsService, ManualStatusPayload } from './manuals.service';
 import { ManualIngestRequestDto } from './dto/manual-request.dto';
+import { ManualStatusResponseDto } from './dto/manual-status.dto';
 
 @ApiTags('Guest Manuals')
 @Controller('api/guest/manuals')
@@ -50,5 +59,19 @@ export class GuestManualsController {
     @Body() body: ManualIngestRequestDto,
   ) {
     return this.manualsService.ingest(files, body);
+  }
+
+  @Get(':conversationId/status')
+  @ApiOperation({ summary: '게스트 세션용 매뉴얼 학습 상태 조회' })
+  @ApiOkResponse({ type: ManualStatusResponseDto })
+  async status(
+    @Param('conversationId') conversationId: string,
+  ): Promise<ManualStatusResponseDto> {
+    const status: ManualStatusPayload =
+      await this.manualsService.getManualStatus(conversationId);
+    return {
+      hasManual: status.hasManual,
+      stats: status.stats,
+    };
   }
 }

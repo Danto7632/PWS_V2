@@ -8,6 +8,7 @@ import type {
   ConversationDetail,
   ConversationMessage,
   ConversationSummary,
+  ManualStatusResponse,
 } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
@@ -103,6 +104,20 @@ export async function uploadManuals(
     body: formData,
     auth: !guest,
   });
+}
+
+export async function fetchManualStatus(
+  conversationId: string,
+  options?: GuestOptions,
+): Promise<ManualStats | null> {
+  const guest = Boolean(options?.guest);
+  const path = guest
+    ? `/api/guest/manuals/${conversationId}/status`
+    : `/api/manuals/${conversationId}/status`;
+  const response = await request<ManualStatusResponse>(path, {
+    auth: !guest,
+  });
+  return response.hasManual ? response.stats ?? null : null;
 }
 
 export async function generateScenario(

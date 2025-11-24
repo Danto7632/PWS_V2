@@ -26,8 +26,10 @@ import {
   renameConversation,
   deleteConversation,
   fetchConversationMessages,
+  fetchManualStatus,
 } from './services/api';
 import { AuthPanel } from './components/AuthPanel';
+import { ManualWorkspace } from './components/ManualWorkspace';
 import { useAuth } from './context/AuthContext';
 
 const DEFAULT_PROVIDER: ProviderConfig = {
@@ -45,7 +47,7 @@ const INITIAL_STATS: StatsSnapshot = {
 const GUIDE_STEPS = [
   {
     title: '1단계: 업무 매뉴얼 업로드',
-    description: '왼쪽 패널에서 업무 매뉴얼 파일을 업로드하면 맞춤 시뮬레이션이 시작됩니다.',
+    description: '메인 화면의 업로드 카드에서 매뉴얼 파일을 추가하거나 프롬프트를 입력해 시뮬레이션을 준비합니다.',
     details: [
       '지원 형식: PDF, TXT, Excel',
       '예시: 고객 응대 매뉴얼, FAQ, 서비스 안내서',
@@ -94,6 +96,7 @@ function App() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [guestConversationId, setGuestConversationId] = useState(() => crypto.randomUUID());
+  const [conversationRoleMap, setConversationRoleMap] = useState<Record<string, Role>>({});
   const isGuestMode = !isAuthenticated;
   const sessionConversationId = isGuestMode ? guestConversationId : activeConversationId;
   const [showAuthPanel, setShowAuthPanel] = useState(false);
@@ -185,7 +188,6 @@ function App() {
     typingTimers.current.clear();
     let cancelled = false;
     setMessages([]);
-    setManualStats(null);
     setRole(null);
     setEvaluation(null);
     setScenario(null);
@@ -217,6 +219,31 @@ function App() {
       cancelled = true;
     };
   }, [activeConversationId, isAuthenticated]);
+
+  useEffect(() => {
+    if (!sessionConversationId) {
+      setManualStats(null);
+      return;
+    }
+    setManualStats(null);
+    let cancelled = false;
+    const loadManualStatus = async () => {
+      try {
+        const stats = await fetchManualStatus(sessionConversationId, { guest: isGuestMode });
+        if (!cancelled) {
+          setManualStats(stats);
+        }
+      } catch (err) {
+        if (!cancelled && !isGuestMode) {
+          setError((err as Error).message);
+        }
+      }
+    };
+    void loadManualStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionConversationId, isGuestMode]);
 
   const appendMessage = useCallback((message: ChatMessage) => {
     setMessages((prev) => [...prev, message]);
@@ -340,7 +367,11 @@ function App() {
     setError(null);
   }, []);
 
-  const handleManualUpload = async (files: File[], ratio: number) => {
+  const handleManualUpload = async (
+    files: File[],
+    ratio: number,
+    instructionText?: string,
+  ) => {
     const targetConversationId = sessionConversationId;
     if (!targetConversationId) {
       setError('대화를 선택하거나 생성한 후 매뉴얼을 업로드하세요.');
@@ -349,12 +380,24 @@ function App() {
     setUploading(true);
     setError(null);
     try {
-      const result = await uploadManuals(targetConversationId, files, ratio, undefined, {
-        guest: isGuestMode,
-      });
+      const result = await uploadManuals(
+        targetConversationId,
+        files,
+        ratio,
+        instructionText,
+        { guest: isGuestMode },
+      );
       setManualStats(result);
       setRole(null);
       resetSession();
+      setConversationRoleMap((prev) => {
+        if (!targetConversationId || !(targetConversationId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[targetConversationId];
+        return next;
+      });
       if (!isGuestMode) {
         touchActiveConversation();
       }
@@ -383,6 +426,9 @@ function App() {
       return;
     }
     setRole(nextRole);
+    setConversationRoleMap((prev) =>
+      sessionConversationId ? { ...prev, [sessionConversationId]: nextRole } : prev,
+    );
     resetSession();
     setStats((prev) => ({
       ...prev,
@@ -461,6 +507,11 @@ function App() {
   };
 
   const canStart = Boolean(manualStats) && !uploading;
+  const manualWorkspaceDisabled = !sessionConversationId || conversationLoading;
+  const displayRole = role ?? (sessionConversationId ? conversationRoleMap[sessionConversationId] ?? null : null);
+  const showSimulationPanel = Boolean(manualStats || messages.length);
+  const showEvaluationPanel = role === 'employee';
+  const simulationGridClass = showEvaluationPanel ? 'simulation-grid' : 'simulation-grid single-column';
 
   const currentScenarioDetails = useMemo(() => {
     if (role !== 'employee' || !scenario) return null;
@@ -500,13 +551,8 @@ function App() {
       )}
       <div className="app-shell">
       <SidebarSettings
-        onManualUpload={handleManualUpload}
-        uploading={uploading}
-        manualStats={manualStats}
         providerConfig={providerConfig}
         onProviderConfigChange={setProviderConfig}
-        embedRatio={embedRatio}
-        onEmbedRatioChange={setEmbedRatio}
         stats={stats}
         ollamaStatus={ollamaStatus}
         conversations={conversations}
@@ -552,16 +598,27 @@ function App() {
           <p>업무 매뉴얼을 업로드하고 역할별 시나리오를 반복 연습하며 피드백으로 역량을 높이세요.</p>
         </header>
 
-          {isGuestMode && (
-            <div className="guest-banner">
-              <span>현재 게스트 모드입니다. 페이지를 새로고침하면 대화와 업로드한 파일이 초기화됩니다.</span>
-              <button type="button" className="link-btn" onClick={handleRequestAuth}>
-                로그인하고 저장하기
-              </button>
-            </div>
-          )}
+        {isGuestMode && (
+          <div className="guest-banner">
+            <span>현재 게스트 모드입니다. 페이지를 새로고침하면 대화와 업로드한 파일이 초기화됩니다.</span>
+            <button type="button" className="link-btn" onClick={handleRequestAuth}>
+              로그인하고 저장하기
+            </button>
+          </div>
+        )}
 
         {error && <div className="error-banner">{error}</div>}
+
+        <ManualWorkspace
+          manualStats={manualStats}
+          uploading={uploading}
+          embedRatio={embedRatio}
+          onEmbedRatioChange={setEmbedRatio}
+          onUpload={handleManualUpload}
+          disabled={manualWorkspaceDisabled}
+          isGuestMode={isGuestMode}
+          onRequestAuth={isGuestMode ? handleRequestAuth : undefined}
+        />
 
         {!manualStats && (
           <section className="guide-panel">
@@ -607,12 +664,16 @@ function App() {
           </section>
         )}
 
-        {role && (
+        {showSimulationPanel && (
           <section className="simulation-section">
             <div className="section-header">
-              <span className={`role-pill ${role}`}>
-                {role === 'customer' ? '고객 모드' : '직원 모드'}
-              </span>
+              {role ? (
+                <span className={`role-pill ${role}`}>
+                  {role === 'customer' ? '고객 모드' : '직원 모드'}
+                </span>
+              ) : (
+                <span className="role-pill neutral">대화 기록</span>
+              )}
               <div className="section-actions">
                 {role === 'employee' && (
                   <button
@@ -624,23 +685,29 @@ function App() {
                     🔄 새 시나리오
                   </button>
                 )}
-                <button type="button" className="ghost-btn" onClick={handleReset}>
-                  ❌ 시뮬레이션 종료
-                </button>
+                {role && (
+                  <button type="button" className="ghost-btn" onClick={handleReset}>
+                    ❌ 시뮬레이션 종료
+                  </button>
+                )}
               </div>
             </div>
 
+            {!role && (
+              <p className="section-subtext">역할을 선택하면 새 메시지를 보낼 수 있어요.</p>
+            )}
+
             {currentScenarioDetails}
 
-            <div className="simulation-grid">
+            <div className={simulationGridClass}>
               <ChatWindow
-                role={role}
+                activeRole={displayRole}
                 messages={messages}
                 onSend={handleSendMessage}
-                disabled={!manualStats || messagesLoading}
+                disabled={!manualStats || messagesLoading || !role}
                 loading={loadingResponse}
               />
-              {role === 'employee' && <EvaluationPanel evaluation={evaluation} />}
+              {showEvaluationPanel && <EvaluationPanel evaluation={evaluation} />}
             </div>
           </section>
         )}

@@ -12,6 +12,12 @@ export interface ManualStats {
   fileCount: number;
   chunkCount: number;
   embeddedChunks: number;
+  updatedAt?: string;
+}
+
+export interface ManualStatusResponse {
+  hasManual: boolean;
+  stats?: ManualStats;
 }
 
 export interface Scenario {
