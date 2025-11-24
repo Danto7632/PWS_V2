@@ -16,11 +16,16 @@ export class ProviderConfigDto {
   @IsEnum(LlmProvider)
   provider: LlmProvider;
 
-  @ApiProperty({ description: '사용할 모델명', example: 'exaone3.5:2.4b-jetson' })
+  @ApiProperty({
+    description: '사용할 모델명',
+    example: 'exaone3.5:2.4b-jetson',
+  })
   @IsString()
   model: string;
 
-  @ApiPropertyOptional({ description: 'OpenAI / Gemini 사용 시 필요한 API Key' })
+  @ApiPropertyOptional({
+    description: 'OpenAI / Gemini 사용 시 필요한 API Key',
+  })
   @IsOptional()
   @IsString()
   apiKey?: string;

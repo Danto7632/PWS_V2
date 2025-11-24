@@ -63,6 +63,7 @@ const GUIDE_STEPS = [
 
 function App() {
   const [manualStats, setManualStats] = useState<ManualStats | null>(null);
+  const [conversationId] = useState(() => crypto.randomUUID());
   const [uploading, setUploading] = useState(false);
   const [providerConfig, setProviderConfig] = useState<ProviderConfig>(DEFAULT_PROVIDER);
   const [embedRatio, setEmbedRatio] = useState(1);
@@ -115,7 +116,7 @@ function App() {
     setUploading(true);
     setError(null);
     try {
-      const result = await uploadManuals(files, ratio);
+      const result = await uploadManuals(conversationId, files, ratio);
       setManualStats(result);
       setRole(null);
       resetSession();
@@ -150,7 +151,7 @@ function App() {
     if (nextRole === 'employee') {
       setLoadingResponse(true);
       try {
-        const scenarioData = await generateScenario(providerConfig);
+        const scenarioData = await generateScenario(conversationId, providerConfig);
         setScenario(scenarioData);
         addAssistantMessage(scenarioData.firstMessage, nextRole);
       } catch (err) {
@@ -170,10 +171,10 @@ function App() {
 
     try {
       if (role === 'customer') {
-        const response = await respondAsCustomer(text, providerConfig);
+        const response = await respondAsCustomer(conversationId, text, providerConfig);
         addAssistantMessage(response.aiResponse, role);
       } else {
-        const response = await respondAsEmployee(text, providerConfig);
+        const response = await respondAsEmployee(conversationId, text, providerConfig);
         setEvaluation(response.evaluation);
         setScenario(response.nextScenario);
         if (response.nextCustomerMessage) {

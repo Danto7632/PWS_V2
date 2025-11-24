@@ -12,13 +12,17 @@ export class SimulationsController {
   @Post('scenario')
   @ApiOperation({ summary: '직원 역할 최초 시나리오 생성' })
   generateScenario(@Body() body: ScenarioRequestDto) {
-    return this.simulationsService.generateScenario(body.providerConfig);
+    return this.simulationsService.generateScenario(
+      body.conversationId,
+      body.providerConfig,
+    );
   }
 
   @Post('customer/respond')
   @ApiOperation({ summary: '고객 역할 응답 생성 (AI 직원)' })
   respondAsCustomer(@Body() body: MessageRequestDto) {
     return this.simulationsService.customerRespond(
+      body.conversationId,
       body.message,
       body.providerConfig,
     );
@@ -28,6 +32,7 @@ export class SimulationsController {
   @ApiOperation({ summary: '직원 역할 응답 생성 및 평가' })
   respondAsEmployee(@Body() body: MessageRequestDto) {
     return this.simulationsService.employeeRespond(
+      body.conversationId,
       body.message,
       body.providerConfig,
     );

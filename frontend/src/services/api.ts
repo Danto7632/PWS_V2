@@ -29,12 +29,18 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 export async function uploadManuals(
+  conversationId: string,
   files: File[],
   embedRatio: number,
+  instructionText?: string,
 ): Promise<ManualStats> {
   const formData = new FormData();
   files.forEach((file) => formData.append('files', file));
+  formData.append('conversationId', conversationId);
   formData.append('embedRatio', embedRatio.toString());
+  if (instructionText?.trim()) {
+    formData.append('instructionText', instructionText.trim());
+  }
 
   const response = await fetch(`${BASE_URL}/api/manuals`, {
     method: 'POST',
@@ -44,36 +50,39 @@ export async function uploadManuals(
 }
 
 export async function generateScenario(
+  conversationId: string,
   providerConfig: ProviderConfig,
 ): Promise<Scenario> {
   const response = await fetch(`${BASE_URL}/api/simulations/scenario`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ providerConfig }),
+    body: JSON.stringify({ conversationId, providerConfig }),
   });
   return handleResponse<Scenario>(response);
 }
 
 export async function respondAsCustomer(
+  conversationId: string,
   message: string,
   providerConfig: ProviderConfig,
 ): Promise<CustomerResponse> {
   const response = await fetch(`${BASE_URL}/api/simulations/customer/respond`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, providerConfig }),
+    body: JSON.stringify({ conversationId, message, providerConfig }),
   });
   return handleResponse<CustomerResponse>(response);
 }
 
 export async function respondAsEmployee(
+  conversationId: string,
   message: string,
   providerConfig: ProviderConfig,
 ): Promise<EmployeeResponse> {
   const response = await fetch(`${BASE_URL}/api/simulations/employee/respond`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, providerConfig }),
+    body: JSON.stringify({ conversationId, message, providerConfig }),
   });
   return handleResponse<EmployeeResponse>(response);
 }
