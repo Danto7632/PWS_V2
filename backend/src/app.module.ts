@@ -7,6 +7,8 @@ import { ManualsModule } from './manuals/manuals.module';
 import { SimulationsModule } from './simulations/simulations.module';
 import { SystemModule } from './system/system.module';
 import { DatabaseModule } from './database/database.module';
+import { AuthModule } from './auth/auth.module';
+import { ConversationsModule } from './conversations/conversations.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { DatabaseModule } from './database/database.module';
     ManualsModule,
     SimulationsModule,
     SystemModule,
+    AuthModule,
+    ConversationsModule,
   ],
 })
 export class AppModule {}

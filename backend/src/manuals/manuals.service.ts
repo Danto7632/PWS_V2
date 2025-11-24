@@ -12,6 +12,8 @@ import * as path from 'path';
 import { promises as fs } from 'fs';
 import * as XLSX from 'xlsx';
 import { DatabaseService } from '../database/database.service';
+import { AuthUser } from '../auth/auth.types';
+import { ConversationsService } from '../conversations/conversations.service';
 
 export interface ManualCacheRecord {
   manualText: string;
@@ -52,17 +54,23 @@ export class ManualsService implements OnModuleInit {
     private readonly embeddingsService: EmbeddingsService,
     private readonly vectorStore: VectorStoreService,
     private readonly db: DatabaseService,
+    private readonly conversationsService: ConversationsService,
   ) {}
 
   async onModuleInit() {
     await fs.mkdir(this.manualDir, { recursive: true });
   }
 
-  async ingest(files: Express.Multer.File[] = [], dto: ManualIngestRequestDto) {
+  async ingest(
+    files: Express.Multer.File[] = [],
+    dto: ManualIngestRequestDto,
+    user: AuthUser,
+  ) {
     const conversationId = dto.conversationId?.trim();
     if (!conversationId) {
       throw new BadRequestException('conversationId is required.');
     }
+    this.conversationsService.getConversationOrThrow(conversationId, user.id);
     const sections: string[] = [];
     for (const file of files) {
       const text = await this.extractText(file);

@@ -3,15 +3,27 @@ import {
   Controller,
   Post,
   UploadedFiles,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { ManualsService } from './manuals.service';
 import { ManualIngestRequestDto } from './dto/manual-request.dto';
-import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { AuthUser } from '../auth/auth.types';
 
 @ApiTags('Manuals')
 @Controller('api/manuals')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
 export class ManualsController {
   constructor(private readonly manualsService: ManualsService) {}
 
@@ -55,7 +67,8 @@ export class ManualsController {
   ingestManuals(
     @UploadedFiles() files: Array<Express.Multer.File>,
     @Body() body: ManualIngestRequestDto,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.manualsService.ingest(files, body);
+    return this.manualsService.ingest(files, body, user);
   }
 }

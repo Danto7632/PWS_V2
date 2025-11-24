@@ -4,6 +4,8 @@ import { VectorStoreService } from '../vector-store/vector-store.service';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { LlmService } from '../llm/llm.service';
 import { ProviderConfigDto } from '../common/dto/provider-config.dto';
+import { AuthUser } from '../auth/auth.types';
+import { ConversationsService } from '../conversations/conversations.service';
 
 export interface Scenario {
   situation: string;
@@ -18,12 +20,15 @@ export class SimulationsService {
     private readonly vectorStore: VectorStoreService,
     private readonly embeddingsService: EmbeddingsService,
     private readonly llmService: LlmService,
+    private readonly conversationsService: ConversationsService,
   ) {}
 
   async generateScenario(
     conversationId: string,
     providerConfig: ProviderConfigDto,
+    user: AuthUser,
   ): Promise<Scenario> {
+    this.conversationsService.getConversationOrThrow(conversationId, user.id);
     const manual = await this.manualsService.getManualOrThrow(conversationId);
     const prompt = `당신은 아래 매뉴얼에 나오는 서비스/업무의 고객 또는 사용자입니다.
 
@@ -38,14 +43,31 @@ ${manual.manualText.slice(0, 1500)}
 고객 첫 말: (직원에게 처음 건네는 한 문장)`;
 
     const response = await this.llmService.call(prompt, providerConfig);
-    return parseScenario(response);
+    const scenario = parseScenario(response);
+    if (scenario.firstMessage) {
+      this.conversationsService.appendMessage(
+        conversationId,
+        'customer',
+        scenario.firstMessage,
+        user.id,
+      );
+    }
+    return scenario;
   }
 
   async customerRespond(
     conversationId: string,
     message: string,
     providerConfig: ProviderConfigDto,
+    user: AuthUser,
   ) {
+    this.conversationsService.getConversationOrThrow(conversationId, user.id);
+    this.conversationsService.appendMessage(
+      conversationId,
+      'customer',
+      message,
+      user.id,
+    );
     const manual = await this.manualsService.getManualOrThrow(conversationId);
     const context = await this.buildContext(conversationId, message);
     const contextText = context.join('\n');
@@ -58,9 +80,16 @@ ${contextText || manual.manualText.slice(0, 1200)}
 
 친절하고 정확한 직원 응답 (100자 이내):`;
 
-    const aiResponse = await this.llmService.call(prompt, providerConfig);
+    const aiResponse = (
+      await this.llmService.call(prompt, providerConfig)
+    ).trim();
+    this.conversationsService.appendMessage(
+      conversationId,
+      'employee',
+      aiResponse,
+    );
     return {
-      aiResponse: aiResponse.trim(),
+      aiResponse,
       context,
     };
   }
@@ -69,7 +98,15 @@ ${contextText || manual.manualText.slice(0, 1200)}
     conversationId: string,
     message: string,
     providerConfig: ProviderConfigDto,
+    user: AuthUser,
   ) {
+    this.conversationsService.getConversationOrThrow(conversationId, user.id);
+    this.conversationsService.appendMessage(
+      conversationId,
+      'employee',
+      message,
+      user.id,
+    );
     const manual = await this.manualsService.getManualOrThrow(conversationId);
     const context = await this.buildContext(conversationId, message);
     const contextText = context.join('\n');
@@ -98,6 +135,7 @@ ${contextText || manual.manualText.slice(0, 1200)}
     const nextScenario = await this.generateScenario(
       conversationId,
       providerConfig,
+      user,
     );
 
     return {

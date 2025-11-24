@@ -5,6 +5,7 @@ import type {
   ProviderConfig,
   StatsSnapshot,
   OllamaStatus,
+  ConversationSummary,
 } from '../types';
 
 const PROVIDER_LABELS = {
@@ -37,6 +38,13 @@ type Props = {
   onEmbedRatioChange: (value: number) => void;
   stats: StatsSnapshot;
   ollamaStatus: OllamaStatus | null;
+  conversations: ConversationSummary[];
+  activeConversationId: string | null;
+  conversationLoading: boolean;
+  onSelectConversation: (conversationId: string) => void;
+  onCreateConversation: (title?: string) => Promise<void>;
+  onRenameConversation: (conversationId: string, title: string) => Promise<void>;
+  onDeleteConversation: (conversationId: string) => Promise<void>;
 };
 
 export function SidebarSettings({
@@ -49,9 +57,18 @@ export function SidebarSettings({
   onEmbedRatioChange,
   stats,
   ollamaStatus,
+  conversations,
+  activeConversationId,
+  conversationLoading,
+  onSelectConversation,
+  onCreateConversation,
+  onRenameConversation,
+  onDeleteConversation,
 }: Props) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [conversationError, setConversationError] = useState<string | null>(null);
+  const [conversationActionLoading, setConversationActionLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const ollamaModels = useMemo(() => {
@@ -91,6 +108,55 @@ export function SidebarSettings({
 
   const openFilePicker = () => {
     fileInputRef.current?.click();
+  };
+
+  const handleConversationError = (err: unknown) => {
+    setConversationError((err as Error).message ?? '대화 작업 중 오류가 발생했습니다.');
+  };
+
+  const handleCreateConversation = async () => {
+    const title = window.prompt('새 대화 제목을 입력하세요', '새 시뮬레이션');
+    if (title === null) return;
+    setConversationError(null);
+    setConversationActionLoading(true);
+    try {
+      await onCreateConversation(title.trim() || undefined);
+    } catch (err) {
+      handleConversationError(err);
+    } finally {
+      setConversationActionLoading(false);
+    }
+  };
+
+  const handleRenameConversation = async (
+    conversationId: string,
+    currentTitle: string,
+  ) => {
+    const title = window.prompt('새 제목을 입력하세요', currentTitle);
+    if (title === null || title.trim() === currentTitle.trim()) return;
+    setConversationError(null);
+    setConversationActionLoading(true);
+    try {
+      await onRenameConversation(conversationId, title.trim() || currentTitle);
+    } catch (err) {
+      handleConversationError(err);
+    } finally {
+      setConversationActionLoading(false);
+    }
+  };
+
+  const handleDeleteConversation = async (conversationId: string, title: string) => {
+    const confirmed = window.confirm(`'${title}' 대화를 삭제하시겠습니까?`);
+    if (!confirmed) return;
+    setConversationError(null);
+    setConversationActionLoading(true);
+    try {
+      await onDeleteConversation(conversationId);
+    } catch (err) {
+      handleConversationError(err);
+    } finally {
+      setConversationActionLoading(false);
+    }
   };
 
   const resetSelection = () => {
@@ -141,6 +207,76 @@ export function SidebarSettings({
 
   return (
     <aside className="sidebar">
+      <div className="sidebar-section conversation-section">
+        <div className="conversation-header">
+          <h2>💬 대화 목록</h2>
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={handleCreateConversation}
+            disabled={conversationLoading || conversationActionLoading}
+          >
+            ➕ 새 대화
+          </button>
+        </div>
+        <div className="conversation-list">
+          {conversationLoading && !conversations.length ? (
+            <p className="conversation-placeholder">대화를 불러오는 중...</p>
+          ) : conversations.length ? (
+            conversations.map((conversation) => (
+              <button
+                key={conversation.id}
+                type="button"
+                className={`conversation-item ${
+                  conversation.id === activeConversationId ? 'active' : ''
+                }`}
+                onClick={() => onSelectConversation(conversation.id)}
+                disabled={conversationActionLoading}
+              >
+                <div>
+                  <strong>{conversation.title}</strong>
+                  <span>
+                    {new Date(conversation.updated_at).toLocaleString('ko-KR', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
+                </div>
+                <div className="conversation-actions">
+                  <button
+                    type="button"
+                    className="text-btn"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleRenameConversation(conversation.id, conversation.title);
+                    }}
+                    disabled={conversationActionLoading}
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    type="button"
+                    className="text-btn"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleDeleteConversation(conversation.id, conversation.title);
+                    }}
+                    disabled={conversationActionLoading}
+                  >
+                    🗑️
+                  </button>
+                </div>
+              </button>
+            ))
+          ) : (
+            <p className="conversation-placeholder">아직 생성된 대화가 없습니다.</p>
+          )}
+        </div>
+        {conversationError && <p className="error-text">{conversationError}</p>}
+      </div>
+
       <div className="sidebar-section">
         <h2>📚 업무 매뉴얼 업로드</h2>
         <form onSubmit={handleSubmit} className="upload-form">

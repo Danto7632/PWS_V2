@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import type {
   ManualStats,
@@ -9,6 +9,7 @@ import type {
   Scenario,
   StatsSnapshot,
   OllamaStatus,
+  ConversationSummary,
 } from './types';
 import { SidebarSettings } from './components/SidebarSettings';
 import { RoleCard } from './components/RoleCard';
@@ -20,7 +21,14 @@ import {
   respondAsCustomer,
   respondAsEmployee,
   fetchOllamaStatus,
+  fetchConversations,
+  createConversation,
+  renameConversation,
+  deleteConversation,
+  fetchConversationMessages,
 } from './services/api';
+import { AuthPanel } from './components/AuthPanel';
+import { useAuth } from './context/AuthContext';
 
 const DEFAULT_PROVIDER: ProviderConfig = {
   provider: 'ollama',
@@ -61,14 +69,24 @@ const GUIDE_STEPS = [
   },
 ];
 
+const sortConversationsByUpdated = (items: ConversationSummary[]) =>
+  [...items].sort(
+    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+  );
+
 function App() {
+  const { user, isAuthenticated, logout } = useAuth();
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
   const [manualStats, setManualStats] = useState<ManualStats | null>(null);
-  const [conversationId] = useState(() => crypto.randomUUID());
   const [uploading, setUploading] = useState(false);
   const [providerConfig, setProviderConfig] = useState<ProviderConfig>(DEFAULT_PROVIDER);
   const [embedRatio, setEmbedRatio] = useState(1);
   const [role, setRole] = useState<Role | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const typingTimers = useRef<Map<string, number>>(new Map());
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [loadingResponse, setLoadingResponse] = useState(false);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [scenario, setScenario] = useState<Scenario | null>(null);
@@ -77,19 +95,150 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setConversations([]);
+      setActiveConversationId(null);
+       setConversationLoading(false);
+      setManualStats(null);
+      setMessages([]);
+      setScenario(null);
+      setEvaluation(null);
+      setMessagesLoading(false);
+      return;
+    }
     fetchOllamaStatus()
       .then(setOllamaStatus)
       .catch(() => setOllamaStatus({ connected: false, error: '연결 실패' }));
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      setConversationLoading(true);
+      try {
+        const list = await fetchConversations();
+        if (cancelled) return;
+        if (list.length) {
+          setConversations(list);
+          setActiveConversationId((current) => {
+            if (current && list.some((item) => item.id === current)) {
+              return current;
+            }
+            return list[0].id;
+          });
+        } else {
+          const created = await createConversation();
+          if (cancelled) return;
+          setConversations([created]);
+          setActiveConversationId(created.id);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError((err as Error).message);
+        }
+      } finally {
+        if (!cancelled) {
+          setConversationLoading(false);
+        }
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    const timers = typingTimers.current;
+    return () => {
+      timers.forEach((timer) => window.clearInterval(timer));
+      timers.clear();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !activeConversationId) {
+      setMessagesLoading(false);
+      return;
+    }
+    typingTimers.current.forEach((timer) => window.clearInterval(timer));
+    typingTimers.current.clear();
+    let cancelled = false;
+    setMessages([]);
+    setManualStats(null);
+    setRole(null);
+    setEvaluation(null);
+    setScenario(null);
+    setMessagesLoading(true);
+    const loadMessages = async () => {
+      try {
+        const history = await fetchConversationMessages(activeConversationId);
+        if (cancelled) return;
+        setMessages(
+          history.map((message) => ({
+            id: message.id,
+            role: message.role,
+            text: message.content,
+            timestamp: message.created_at,
+          })),
+        );
+      } catch (err) {
+        if (!cancelled) {
+          setError((err as Error).message);
+        }
+      } finally {
+        if (!cancelled) {
+          setMessagesLoading(false);
+        }
+      }
+    };
+    void loadMessages();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId, isAuthenticated]);
 
   const appendMessage = useCallback((message: ChatMessage) => {
     setMessages((prev) => [...prev, message]);
   }, []);
 
+  const updateMessageText = useCallback((messageId: string, text: string) => {
+    setMessages((prev) =>
+      prev.map((message) => (message.id === messageId ? { ...message, text } : message)),
+    );
+  }, []);
+
+  const animateAssistantMessage = useCallback(
+    (messageId: string, fullText: string) => {
+      if (!fullText) {
+        updateMessageText(messageId, '');
+        return;
+      }
+      const existing = typingTimers.current.get(messageId);
+      if (existing) {
+        window.clearInterval(existing);
+      }
+      let index = 0;
+      const intervalDuration = fullText.length > 120 ? 8 : 18;
+      const timer = window.setInterval(() => {
+        index += 1;
+        updateMessageText(messageId, fullText.slice(0, index));
+        if (index >= fullText.length) {
+          window.clearInterval(timer);
+          typingTimers.current.delete(messageId);
+        }
+      }, intervalDuration);
+      typingTimers.current.set(messageId, timer);
+    },
+    [updateMessageText],
+  );
+
   const createMessage = useCallback(
-    (author: ChatMessage['author'], messageRole: ChatMessage['role'], text: string): ChatMessage => ({
+    (messageRole: ChatMessage['role'], text: string): ChatMessage => ({
       id: crypto.randomUUID(),
-      author,
       role: messageRole,
       text,
       timestamp: new Date().toISOString(),
@@ -100,9 +249,71 @@ function App() {
   const addAssistantMessage = useCallback(
     (text: string, activeRole: Role) => {
       const assistantRole: Role = activeRole === 'customer' ? 'employee' : 'customer';
-      appendMessage(createMessage('assistant', assistantRole, text));
+      const pendingMessage = createMessage(assistantRole, '');
+      appendMessage(pendingMessage);
+      animateAssistantMessage(pendingMessage.id, text);
     },
-    [appendMessage, createMessage],
+    [animateAssistantMessage, appendMessage, createMessage],
+  );
+
+  const touchActiveConversation = useCallback(() => {
+    if (!activeConversationId) return;
+    const timestamp = new Date().toISOString();
+    setConversations((prev) =>
+      sortConversationsByUpdated(
+        prev.map((item) =>
+          item.id === activeConversationId ? { ...item, updated_at: timestamp } : item,
+        ),
+      ),
+    );
+  }, [activeConversationId]);
+
+  const handleSelectConversation = useCallback((conversationId: string) => {
+    setActiveConversationId(conversationId);
+  }, []);
+
+  const handleCreateConversation = useCallback(async (title?: string) => {
+    const created = await createConversation(title);
+    setConversations((prev) => sortConversationsByUpdated([created, ...prev]));
+    setActiveConversationId(created.id);
+  }, []);
+
+  const handleRenameConversation = useCallback(
+    async (conversationId: string, title: string) => {
+      const updated = await renameConversation(conversationId, title);
+      setConversations((prev) =>
+        sortConversationsByUpdated(
+          prev.map((item) => (item.id === conversationId ? updated : item)),
+        ),
+      );
+    },
+    [],
+  );
+
+  const handleDeleteConversation = useCallback(
+    async (conversationId: string) => {
+      await deleteConversation(conversationId);
+      let shouldCreateReplacement = false;
+      setConversations((prev) => {
+        const nextList = prev.filter((item) => item.id !== conversationId);
+        if (!nextList.length) {
+          shouldCreateReplacement = true;
+        }
+        setActiveConversationId((current) => {
+          if (current && current !== conversationId && nextList.some((item) => item.id === current)) {
+            return current;
+          }
+          return nextList[0]?.id ?? null;
+        });
+        return sortConversationsByUpdated(nextList);
+      });
+      if (shouldCreateReplacement) {
+        const created = await createConversation();
+        setConversations([created]);
+        setActiveConversationId(created.id);
+      }
+    },
+    [],
   );
 
   const resetSession = useCallback(() => {
@@ -113,13 +324,18 @@ function App() {
   }, []);
 
   const handleManualUpload = async (files: File[], ratio: number) => {
+    if (!activeConversationId) {
+      setError('대화를 선택하거나 생성한 후 매뉴얼을 업로드하세요.');
+      return;
+    }
     setUploading(true);
     setError(null);
     try {
-      const result = await uploadManuals(conversationId, files, ratio);
+      const result = await uploadManuals(activeConversationId, files, ratio);
       setManualStats(result);
       setRole(null);
       resetSession();
+      touchActiveConversation();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -134,6 +350,10 @@ function App() {
   }, [manualStats]);
 
   const startRole = async (nextRole: Role) => {
+    if (!activeConversationId) {
+      setError('먼저 대화를 선택하세요.');
+      return;
+    }
     try {
       ensureManualReady();
     } catch (err) {
@@ -151,9 +371,10 @@ function App() {
     if (nextRole === 'employee') {
       setLoadingResponse(true);
       try {
-        const scenarioData = await generateScenario(conversationId, providerConfig);
+        const scenarioData = await generateScenario(activeConversationId, providerConfig);
         setScenario(scenarioData);
         addAssistantMessage(scenarioData.firstMessage, nextRole);
+        touchActiveConversation();
       } catch (err) {
         setError((err as Error).message);
       } finally {
@@ -163,18 +384,18 @@ function App() {
   };
 
   const handleSendMessage = async (text: string) => {
-    if (!role || !text.trim()) return;
+    if (!role || !text.trim() || !activeConversationId) return;
     setError(null);
-    const userMessage = createMessage('user', role, text);
+    const userMessage = createMessage(role, text);
     appendMessage(userMessage);
     setLoadingResponse(true);
 
     try {
       if (role === 'customer') {
-        const response = await respondAsCustomer(conversationId, text, providerConfig);
+        const response = await respondAsCustomer(activeConversationId, text, providerConfig);
         addAssistantMessage(response.aiResponse, role);
       } else {
-        const response = await respondAsEmployee(conversationId, text, providerConfig);
+        const response = await respondAsEmployee(activeConversationId, text, providerConfig);
         setEvaluation(response.evaluation);
         setScenario(response.nextScenario);
         if (response.nextCustomerMessage) {
@@ -186,6 +407,7 @@ function App() {
           totalScore: prev.totalScore + response.evaluation.score,
         }));
       }
+      touchActiveConversation();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -217,6 +439,10 @@ function App() {
     );
   }, [role, scenario]);
 
+  if (!isAuthenticated || !user) {
+    return <AuthPanel />;
+  }
+
   return (
     <div className="app-shell">
       <SidebarSettings
@@ -229,8 +455,27 @@ function App() {
         onEmbedRatioChange={setEmbedRatio}
         stats={stats}
         ollamaStatus={ollamaStatus}
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        conversationLoading={conversationLoading}
+        onSelectConversation={handleSelectConversation}
+        onCreateConversation={handleCreateConversation}
+        onRenameConversation={handleRenameConversation}
+        onDeleteConversation={handleDeleteConversation}
       />
       <main className="main-panel">
+        <div className="auth-topbar">
+          <div className="user-chip">
+            <span className="user-avatar">{user.displayName.slice(0, 1).toUpperCase()}</span>
+            <div>
+              <strong>{user.displayName}</strong>
+              <p>{user.email}</p>
+            </div>
+          </div>
+          <button type="button" className="ghost-btn" onClick={logout}>
+            🔓 로그아웃
+          </button>
+        </div>
         <header className="hero">
           <span className="hero-badge">🚀 AI 기반 고객 응대 실전 연습</span>
           <h1>🍑 실전형 업무 시뮬레이터 for 신입</h1>
@@ -313,7 +558,7 @@ function App() {
                 role={role}
                 messages={messages}
                 onSend={handleSendMessage}
-                disabled={!manualStats}
+                disabled={!manualStats || messagesLoading}
                 loading={loadingResponse}
               />
               {role === 'employee' && <EvaluationPanel evaluation={evaluation} />}

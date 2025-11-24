@@ -12,6 +12,7 @@ type Props = {
 export function ChatWindow({ role, messages, onSend, disabled, loading }: Props) {
   const [input, setInput] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
+  const aiRole: Role = role === 'customer' ? 'employee' : 'customer';
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -27,17 +28,32 @@ export function ChatWindow({ role, messages, onSend, disabled, loading }: Props)
   return (
     <div className="chat-window">
       <div className="chat-history" ref={listRef}>
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`chat-bubble ${message.author === 'user' ? 'user' : 'assistant'}`}
-          >
-            <div className="chat-meta">
-              {message.author === 'user' ? (role === 'customer' ? '고객 (당신)' : '직원 (당신)') : role === 'customer' ? 'AI 직원' : 'AI 고객'}
+        {messages.map((message) => {
+          const bubbleClass =
+            message.role === 'customer' ? 'customer' : message.role === 'employee' ? 'employee' : 'system';
+          const label =
+            message.role === 'customer'
+              ? '고객'
+              : message.role === 'employee'
+                ? '직원'
+                : '시스템';
+          return (
+            <div key={message.id} className={`chat-bubble ${bubbleClass}`}>
+              <div className="chat-meta">{label}</div>
+              <p>{message.text}</p>
             </div>
-            <p>{message.text}</p>
+          );
+        })}
+        {loading && (
+          <div className={`chat-bubble ${aiRole}`}>
+            <div className="chat-meta">{aiRole === 'customer' ? 'AI 고객' : 'AI 직원'}</div>
+            <div className="typing-dots">
+              <span />
+              <span />
+              <span />
+            </div>
           </div>
-        ))}
+        )}
         {!messages.length && (
           <div className="chat-placeholder">
             {role === 'customer'
