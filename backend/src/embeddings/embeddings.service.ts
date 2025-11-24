@@ -18,7 +18,7 @@ export class EmbeddingsService {
     if (!this.extractorPromise) {
       this.extractorPromise = (async () => {
         this.logger.log('Loading embedding model (all-MiniLM-L6-v2)...');
-        const { pipeline } = await import('@xenova/transformers');
+        const { pipeline } = await importTransformers();
         return (await pipeline(
           'feature-extraction',
           'Xenova/all-MiniLM-L6-v2',
@@ -40,4 +40,15 @@ export class EmbeddingsService {
     });
     return Array.from(embedding.data) as EmbeddingVector;
   }
+}
+
+type TransformersModule = typeof import('@xenova/transformers');
+
+function importTransformers(): Promise<TransformersModule> {
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const dynamicImport = new Function(
+    'specifier',
+    'return import(specifier);',
+  ) as (specifier: string) => Promise<TransformersModule>;
+  return dynamicImport('@xenova/transformers');
 }
