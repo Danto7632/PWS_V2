@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ManualsService } from '../manuals/manuals.service';
 import { VectorStoreService } from '../vector-store/vector-store.service';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
@@ -20,13 +20,15 @@ export class SimulationsService {
     private readonly llmService: LlmService,
   ) {}
 
-  async generateScenario(providerConfig: ProviderConfigDto): Promise<Scenario> {
-    this.ensureManualsReady();
-    const manual = this.manualsService.getManualText();
+  async generateScenario(
+    conversationId: string,
+    providerConfig: ProviderConfigDto,
+  ): Promise<Scenario> {
+    const manual = await this.manualsService.getManualOrThrow(conversationId);
     const prompt = `당신은 아래 매뉴얼에 나오는 서비스/업무의 고객 또는 사용자입니다.
 
 [업무/서비스 매뉴얼 발췌]
-${manual.slice(0, 1500)}
+${manual.manualText.slice(0, 1500)}
 
 위 매뉴얼의 주제와 용어를 벗어나지 말고, 실제 현장에서 자주 나올 법한 고객 문의 상황 1개만 만드세요.
 
@@ -39,14 +41,18 @@ ${manual.slice(0, 1500)}
     return parseScenario(response);
   }
 
-  async customerRespond(message: string, providerConfig: ProviderConfigDto) {
-    this.ensureManualsReady();
-    const context = await this.buildContext(message);
+  async customerRespond(
+    conversationId: string,
+    message: string,
+    providerConfig: ProviderConfigDto,
+  ) {
+    const manual = await this.manualsService.getManualOrThrow(conversationId);
+    const context = await this.buildContext(conversationId, message);
     const contextText = context.join('\n');
     const prompt = `다음 업무 매뉴얼을 참고하여 고객 문의에 전문적이고 친절하게 응답해주세요:
 
 업무 매뉴얼:
-${contextText || this.manualsService.getManualText().slice(0, 1200)}
+${contextText || manual.manualText.slice(0, 1200)}
 
 고객 문의: ${message}
 
@@ -59,14 +65,18 @@ ${contextText || this.manualsService.getManualText().slice(0, 1200)}
     };
   }
 
-  async employeeRespond(message: string, providerConfig: ProviderConfigDto) {
-    this.ensureManualsReady();
-    const context = await this.buildContext(message);
+  async employeeRespond(
+    conversationId: string,
+    message: string,
+    providerConfig: ProviderConfigDto,
+  ) {
+    const manual = await this.manualsService.getManualOrThrow(conversationId);
+    const context = await this.buildContext(conversationId, message);
     const contextText = context.join('\n');
     const prompt = `다음 업무 매뉴얼을 기준으로 직원의 고객 응답을 평가해주세요:
 
 업무 매뉴얼:
-${contextText || this.manualsService.getManualText().slice(0, 1200)}
+${contextText || manual.manualText.slice(0, 1200)}
 
 직원 응답: ${message}
 
@@ -85,7 +95,10 @@ ${contextText || this.manualsService.getManualText().slice(0, 1200)}
 
     const evaluationRaw = await this.llmService.call(prompt, providerConfig);
     const { score, maxScore } = parseScore(evaluationRaw);
-    const nextScenario = await this.generateScenario(providerConfig);
+    const nextScenario = await this.generateScenario(
+      conversationId,
+      providerConfig,
+    );
 
     return {
       evaluation: {
@@ -99,20 +112,19 @@ ${contextText || this.manualsService.getManualText().slice(0, 1200)}
     };
   }
 
-  private ensureManualsReady() {
-    if (!this.manualsService.hasManuals()) {
-      throw new BadRequestException(
-        '먼저 업무 매뉴얼을 업로드하고 학습을 시작하세요.',
-      );
-    }
-  }
-
-  private async buildContext(query: string): Promise<string[]> {
+  private async buildContext(
+    conversationId: string,
+    query: string,
+  ): Promise<string[]> {
     const embedding = await this.embeddingsService.embed(query);
     if (!embedding.length) {
       return [];
     }
-    const docs = this.vectorStore.queryByEmbedding(embedding, 3);
+    const docs = this.vectorStore.queryByEmbedding(
+      conversationId,
+      embedding,
+      3,
+    );
     return docs.map((doc) => doc.content);
   }
 }

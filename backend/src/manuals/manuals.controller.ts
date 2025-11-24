@@ -8,12 +8,7 @@ import {
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { ManualsService } from './manuals.service';
 import { ManualIngestRequestDto } from './dto/manual-request.dto';
-import {
-  ApiBody,
-  ApiConsumes,
-  ApiOperation,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Manuals')
 @Controller('api/manuals')
@@ -24,10 +19,15 @@ export class ManualsController {
   @ApiOperation({ summary: '업무 매뉴얼 업로드 및 임베딩' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
-    description: '업로드할 파일과 임베딩 비율을 전달합니다.',
+    description:
+      '업로드할 파일, 대화 ID, 임베딩 비율, 선택적 지침을 전달합니다.',
     schema: {
       type: 'object',
       properties: {
+        conversationId: {
+          type: 'string',
+          description: '대화 식별자',
+        },
         embedRatio: {
           type: 'number',
           minimum: 0.2,
@@ -43,8 +43,12 @@ export class ManualsController {
           },
           description: 'PDF, TXT, Excel 파일 목록',
         },
+        instructionText: {
+          type: 'string',
+          description: '파일 대신 업로드할 선택적 지침 텍스트',
+        },
       },
-      required: ['embedRatio', 'files'],
+      required: ['conversationId', 'embedRatio'],
     },
   })
   @UseInterceptors(FilesInterceptor('files'))

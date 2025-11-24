@@ -10,6 +10,8 @@ export interface VectorDocument {
   embedding: EmbeddingVector;
 }
 
+type PersistedVectorStore = Record<string, VectorDocument[]>;
+
 @Injectable()
 export class VectorStoreService implements OnModuleInit {
   private readonly logger = new Logger(VectorStoreService.name);
@@ -18,14 +20,19 @@ export class VectorStoreService implements OnModuleInit {
     this.storagePath,
     'vector-store.json',
   );
-  private documents: VectorDocument[] = [];
+  private documentsByConversation: PersistedVectorStore = {};
 
   async onModuleInit() {
     await fs.mkdir(this.storagePath, { recursive: true });
     try {
       const raw = await fs.readFile(this.storageFile, 'utf8');
-      this.documents = JSON.parse(raw) as VectorDocument[];
-      this.logger.log(`Loaded ${this.documents.length} vectors from disk.`);
+      const parsed = JSON.parse(raw) as PersistedVectorStore;
+      this.documentsByConversation = parsed;
+      const allDocs = Object.values(parsed).reduce(
+        (sum, docs) => sum + docs.length,
+        0,
+      );
+      this.logger.log(`Loaded ${allDocs} vectors across conversations.`);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         this.logger.error(
@@ -33,40 +40,56 @@ export class VectorStoreService implements OnModuleInit {
           error as Error,
         );
       }
-      this.documents = [];
+      this.documentsByConversation = {};
     }
   }
 
-  getDocumentCount() {
-    return this.documents.length;
+  getDocumentCount(conversationId?: string) {
+    if (conversationId) {
+      return this.documentsByConversation[conversationId]?.length ?? 0;
+    }
+    return Object.values(this.documentsByConversation).reduce(
+      (sum, docs) => sum + docs.length,
+      0,
+    );
   }
 
-  async replaceDocuments(chunks: string[], embeddings: EmbeddingVector[]) {
-    this.documents = chunks.map((content, idx) => ({
-      id: `chunk_${idx}_${randomUUID()}`,
-      content,
-      embedding: embeddings[idx],
-    }));
+  async replaceDocuments(
+    conversationId: string,
+    chunks: string[],
+    embeddings: EmbeddingVector[],
+  ) {
+    this.documentsByConversation[conversationId] = chunks.map(
+      (content, idx) => ({
+        id: `chunk_${idx}_${randomUUID()}`,
+        content,
+        embedding: embeddings[idx],
+      }),
+    );
     await this.persist();
   }
 
   async persist() {
     await fs.writeFile(
       this.storageFile,
-      JSON.stringify(this.documents, null, 2),
+      JSON.stringify(this.documentsByConversation, null, 2),
       'utf8',
     );
-    this.logger.log(`Persisted ${this.documents.length} vectors.`);
+    this.logger.log(
+      `Persisted ${this.getDocumentCount()} vectors across conversations.`,
+    );
   }
 
   queryByEmbedding(
+    conversationId: string,
     queryEmbedding: EmbeddingVector,
     topK = 3,
   ): VectorDocument[] {
-    if (!queryEmbedding.length || !this.documents.length) {
+    const documents = this.documentsByConversation[conversationId] ?? [];
+    if (!queryEmbedding.length || !documents.length) {
       return [];
     }
-    const scored = this.documents
+    const scored = documents
       .map((doc) => ({
         doc,
         score: cosineSimilarity(queryEmbedding, doc.embedding),
