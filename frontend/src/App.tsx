@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import './App.css';
 import type {
   ManualStats,
@@ -37,6 +37,16 @@ const DEFAULT_PROVIDER: ProviderConfig = {
   model: 'exaone3.5:2.4b-jetson',
 };
 
+const PROVIDER_LABELS: Record<ProviderConfig['provider'], string> = {
+  ollama: '로컬 (Ollama)',
+  openai: 'OpenAI GPT',
+  gemini: 'Google Gemini',
+};
+
+const OPENAI_MODELS = ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'gpt-4o'];
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+const OLLAMA_DEFAULT_MODELS = ['exaone3.5:2.4b-jetson', 'llama3.2', 'gemma2'];
+
 const INITIAL_STATS: StatsSnapshot = {
   totalSimulations: 0,
   customerRoleCount: 0,
@@ -44,30 +54,18 @@ const INITIAL_STATS: StatsSnapshot = {
   totalScore: 0,
 };
 
-const GUIDE_STEPS = [
+const PROMPT_SUGGESTIONS = [
   {
-    title: '1단계: 업무 매뉴얼 업로드',
-    description: '메인 화면의 업로드 카드에서 매뉴얼 파일을 추가하거나 프롬프트를 입력해 시뮬레이션을 준비합니다.',
-    details: [
-      '지원 형식: PDF, TXT, Excel',
-      '예시: 고객 응대 매뉴얼, FAQ, 서비스 안내서',
-    ],
+    title: '고객 불만 응대',
+    description: '감정 완화용 스크립트를 추천받으세요.',
   },
   {
-    title: '2단계: 역할 선택',
-    description: '고객 또는 직원 역할을 선택하고 각 입장에서 상황을 체험하세요.',
-    details: [
-      '고객 역할: AI 직원과 대화하며 고객 시선을 경험',
-      '직원 역할: AI 고객의 문의에 응답하며 실전 감각 강화',
-    ],
+    title: '상품 업셀링 멘트',
+    description: '친절한 보조 상품 제안법을 연습해보세요.',
   },
   {
-    title: '3단계: 실전 연습',
-    description: '시나리오별 대화와 피드백으로 바로 개선점을 확인합니다.',
-    details: [
-      'AI의 즉각 피드백으로 응대 품질을 정량 평가',
-      '반복 학습으로 자신감과 해결력 강화',
-    ],
+    title: 'CS FAQ 작성',
+    description: '반복 질문을 자동화할 답변을 만들어보세요.',
   },
 ];
 
@@ -76,18 +74,72 @@ const sortConversationsByUpdated = (items: ConversationSummary[]) =>
     (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
   );
 
+const GUEST_STORAGE_KEY = 'pws_guest_session_v1';
+
+type GuestSessionSnapshot = {
+  conversationId: string;
+  messages: ChatMessage[];
+  manualStats: ManualStats | null;
+  role: Role | null;
+};
+
+const createGuestSnapshot = (): GuestSessionSnapshot => ({
+  conversationId: crypto.randomUUID(),
+  messages: [],
+  manualStats: null,
+  role: null,
+});
+
+const readGuestSnapshot = (): GuestSessionSnapshot => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return createGuestSnapshot();
+  }
+  const raw = window.localStorage.getItem(GUEST_STORAGE_KEY);
+  if (!raw) {
+    const fallback = createGuestSnapshot();
+    window.localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(fallback));
+    return fallback;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<GuestSessionSnapshot>;
+    return {
+      conversationId: parsed.conversationId ?? crypto.randomUUID(),
+      messages: Array.isArray(parsed.messages) ? (parsed.messages as ChatMessage[]) : [],
+      manualStats: parsed.manualStats ?? null,
+      role: (parsed.role as Role | null | undefined) ?? null,
+    };
+  } catch {
+    const fallback = createGuestSnapshot();
+    window.localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(fallback));
+    return fallback;
+  }
+};
+
+const writeGuestSnapshot = (snapshot: GuestSessionSnapshot) => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  window.localStorage.setItem(GUEST_STORAGE_KEY, JSON.stringify(snapshot));
+};
+
 function App() {
   const { user, isAuthenticated, logout } = useAuth();
+  const initialGuestSnapshot = useMemo(() => readGuestSnapshot(), []);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [conversationLoading, setConversationLoading] = useState(false);
-  const [manualStats, setManualStats] = useState<ManualStats | null>(null);
+  const [manualStats, setManualStats] = useState<ManualStats | null>(
+    initialGuestSnapshot.manualStats ?? null,
+  );
   const [uploading, setUploading] = useState(false);
   const [providerConfig, setProviderConfig] = useState<ProviderConfig>(DEFAULT_PROVIDER);
   const [embedRatio, setEmbedRatio] = useState(1);
   const [role, setRole] = useState<Role | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(
+    initialGuestSnapshot.messages ?? [],
+  );
   const typingTimers = useRef<Map<string, number>>(new Map());
+  const roleInitRef = useRef(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [loadingResponse, setLoadingResponse] = useState(false);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
@@ -95,26 +147,64 @@ function App() {
   const [stats, setStats] = useState<StatsSnapshot>(INITIAL_STATS);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [guestConversationId, setGuestConversationId] = useState(() => crypto.randomUUID());
-  const [conversationRoleMap, setConversationRoleMap] = useState<Record<string, Role>>({});
+  const [guestConversationId, setGuestConversationId] = useState(
+    initialGuestSnapshot.conversationId,
+  );
+  const [conversationRoleMap, setConversationRoleMap] = useState<Record<string, Role>>(
+    initialGuestSnapshot.role
+      ? { [initialGuestSnapshot.conversationId]: initialGuestSnapshot.role }
+      : {},
+  );
   const isGuestMode = !isAuthenticated;
   const sessionConversationId = isGuestMode ? guestConversationId : activeConversationId;
   const [showAuthPanel, setShowAuthPanel] = useState(false);
+  const guestRememberedRole = guestConversationId
+    ? conversationRoleMap[guestConversationId] ?? null
+    : null;
+  const manualStatusSessionRef = useRef<string | null>(sessionConversationId);
+  const ollamaModels = useMemo(() => {
+    if (ollamaStatus?.connected && ollamaStatus.models?.length) {
+      return ollamaStatus.models;
+    }
+    return OLLAMA_DEFAULT_MODELS;
+  }, [ollamaStatus]);
+  const providerModels = useMemo(() => {
+    switch (providerConfig.provider) {
+      case 'openai':
+        return OPENAI_MODELS;
+      case 'gemini':
+        return GEMINI_MODELS;
+      default:
+        return ollamaModels;
+    }
+  }, [providerConfig.provider, ollamaModels]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      setConversations([]);
-      setActiveConversationId(null);
-      setConversationLoading(false);
+    if (isAuthenticated) {
+      setShowAuthPanel(false);
+      setRole(null);
       setManualStats(null);
       setMessages([]);
       setScenario(null);
       setEvaluation(null);
       setMessagesLoading(false);
-      setGuestConversationId(crypto.randomUUID());
-    } else {
-      setShowAuthPanel(false);
+      setConversationRoleMap({});
+      return;
     }
+    const snapshot = readGuestSnapshot();
+    setRole(null);
+    setConversations([]);
+    setActiveConversationId(null);
+    setConversationLoading(false);
+    setManualStats(snapshot.manualStats ?? null);
+    setMessages(snapshot.messages ?? []);
+    setScenario(null);
+    setEvaluation(null);
+    setMessagesLoading(false);
+    setGuestConversationId(snapshot.conversationId);
+    setConversationRoleMap(
+      snapshot.role ? { [snapshot.conversationId]: snapshot.role } : {},
+    );
   }, [isAuthenticated]);
 
   useEffect(() => {
@@ -123,12 +213,52 @@ function App() {
       .catch(() => setOllamaStatus({ connected: false, error: '연결 실패' }));
   }, []);
 
+  useEffect(() => {
+    if (!isGuestMode) {
+      return;
+    }
+    writeGuestSnapshot({
+      conversationId: guestConversationId,
+      messages,
+      manualStats,
+      role: guestRememberedRole,
+    });
+  }, [isGuestMode, guestConversationId, messages, manualStats, guestRememberedRole]);
+
   const handleRequestAuth = useCallback(() => {
     setShowAuthPanel(true);
   }, []);
 
   const handleCloseAuthPanel = useCallback(() => {
     setShowAuthPanel(false);
+  }, []);
+
+  const handleProviderChange = useCallback(
+    (event: ChangeEvent<HTMLSelectElement>) => {
+      const provider = event.target.value as ProviderConfig['provider'];
+      const nextModels = (() => {
+        if (provider === 'openai') return OPENAI_MODELS;
+        if (provider === 'gemini') return GEMINI_MODELS;
+        return ollamaModels;
+      })();
+      setProviderConfig((prev) => ({
+        ...prev,
+        provider,
+        model: nextModels[0],
+        apiKey: provider === 'ollama' ? undefined : prev.apiKey,
+      }));
+    },
+    [ollamaModels],
+  );
+
+  const handleModelChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    const value = event.target.value;
+    setProviderConfig((prev) => ({ ...prev, model: value }));
+  }, []);
+
+  const handleApiKeyChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setProviderConfig((prev) => ({ ...prev, apiKey: value }));
   }, []);
 
   useEffect(() => {
@@ -223,9 +353,15 @@ function App() {
   useEffect(() => {
     if (!sessionConversationId) {
       setManualStats(null);
+      manualStatusSessionRef.current = null;
+      roleInitRef.current = false;
       return;
     }
-    setManualStats(null);
+    if (manualStatusSessionRef.current !== sessionConversationId) {
+      setManualStats(null);
+      roleInitRef.current = false;
+    }
+    manualStatusSessionRef.current = sessionConversationId;
     let cancelled = false;
     const loadManualStatus = async () => {
       try {
@@ -361,6 +497,8 @@ function App() {
   );
 
   const resetSession = useCallback(() => {
+    typingTimers.current.forEach((timer) => window.clearInterval(timer));
+    typingTimers.current.clear();
     setMessages([]);
     setEvaluation(null);
     setScenario(null);
@@ -398,6 +536,7 @@ function App() {
         delete next[targetConversationId];
         return next;
       });
+      roleInitRef.current = false;
       if (!isGuestMode) {
         touchActiveConversation();
       }
@@ -414,48 +553,59 @@ function App() {
     }
   }, [manualStats]);
 
-  const startRole = async (nextRole: Role) => {
-    if (!sessionConversationId) {
-      setError('대화 세션을 준비하는 중입니다. 잠시 후 다시 시도하세요.');
-      return;
-    }
-    try {
-      ensureManualReady();
-    } catch (err) {
-      setError((err as Error).message);
-      return;
-    }
-    setRole(nextRole);
-    setConversationRoleMap((prev) =>
-      sessionConversationId ? { ...prev, [sessionConversationId]: nextRole } : prev,
-    );
-    resetSession();
-    setStats((prev) => ({
-      ...prev,
-      customerRoleCount: nextRole === 'customer' ? prev.customerRoleCount + 1 : prev.customerRoleCount,
-      employeeRoleCount: nextRole === 'employee' ? prev.employeeRoleCount + 1 : prev.employeeRoleCount,
-    }));
-
-    if (nextRole === 'employee') {
-      setLoadingResponse(true);
+  const startRole = useCallback(
+    async (nextRole: Role) => {
+      if (!sessionConversationId) {
+        setError('대화 세션을 준비하는 중입니다. 잠시 후 다시 시도하세요.');
+        return;
+      }
       try {
-        const scenarioData = await generateScenario(
-          sessionConversationId,
-          providerConfig,
-          { guest: isGuestMode },
-        );
-        setScenario(scenarioData);
-        addAssistantMessage(scenarioData.firstMessage, nextRole);
-        if (!isGuestMode) {
-          touchActiveConversation();
-        }
+        ensureManualReady();
       } catch (err) {
         setError((err as Error).message);
-      } finally {
-        setLoadingResponse(false);
+        return;
       }
-    }
-  };
+      setRole(nextRole);
+      setConversationRoleMap((prev) =>
+        sessionConversationId ? { ...prev, [sessionConversationId]: nextRole } : prev,
+      );
+      resetSession();
+      setStats((prev) => ({
+        ...prev,
+        customerRoleCount: nextRole === 'customer' ? prev.customerRoleCount + 1 : prev.customerRoleCount,
+        employeeRoleCount: nextRole === 'employee' ? prev.employeeRoleCount + 1 : prev.employeeRoleCount,
+      }));
+
+      if (nextRole === 'employee') {
+        setLoadingResponse(true);
+        try {
+          const scenarioData = await generateScenario(
+            sessionConversationId,
+            providerConfig,
+            { guest: isGuestMode },
+          );
+          setScenario(scenarioData);
+          addAssistantMessage(scenarioData.firstMessage, nextRole);
+          if (!isGuestMode) {
+            touchActiveConversation();
+          }
+        } catch (err) {
+          setError((err as Error).message);
+        } finally {
+          setLoadingResponse(false);
+        }
+      }
+    },
+    [
+      sessionConversationId,
+      ensureManualReady,
+      resetSession,
+      addAssistantMessage,
+      isGuestMode,
+      providerConfig,
+      touchActiveConversation,
+    ],
+  );
 
   const handleSendMessage = async (text: string) => {
     if (!role || !text.trim() || !sessionConversationId) return;
@@ -501,14 +651,39 @@ function App() {
     }
   };
 
+  useEffect(() => {
+    if (!manualStats || !sessionConversationId) {
+      roleInitRef.current = false;
+      return;
+    }
+    if (role) {
+      roleInitRef.current = true;
+      return;
+    }
+    if (roleInitRef.current) {
+      return;
+    }
+    roleInitRef.current = true;
+    void startRole('employee');
+  }, [manualStats, sessionConversationId, role, startRole]);
+
+  const displayRole = role ?? (sessionConversationId ? conversationRoleMap[sessionConversationId] ?? null : null);
+
   const handleReset = () => {
     setRole(null);
     resetSession();
   };
 
+  const handleToggleRole = () => {
+    if (!manualStats || loadingResponse) return;
+    const currentRole = displayRole;
+    if (!currentRole) return;
+    const nextRole: Role = currentRole === 'customer' ? 'employee' : 'customer';
+    void startRole(nextRole);
+  };
+
   const canStart = Boolean(manualStats) && !uploading;
   const manualWorkspaceDisabled = !sessionConversationId || conversationLoading;
-  const displayRole = role ?? (sessionConversationId ? conversationRoleMap[sessionConversationId] ?? null : null);
   const showSimulationPanel = Boolean(manualStats || messages.length);
   const showEvaluationPanel = role === 'employee';
   const simulationGridClass = showEvaluationPanel ? 'simulation-grid' : 'simulation-grid single-column';
@@ -551,10 +726,6 @@ function App() {
       )}
       <div className="app-shell">
       <SidebarSettings
-        providerConfig={providerConfig}
-        onProviderConfigChange={setProviderConfig}
-        stats={stats}
-        ollamaStatus={ollamaStatus}
         conversations={conversations}
         activeConversationId={activeConversationId}
         conversationLoading={conversationLoading}
@@ -592,10 +763,71 @@ function App() {
               )}
             </div>
         </div>
-        <header className="hero">
-          <span className="hero-badge">🚀 AI 기반 고객 응대 실전 연습</span>
-          <h1>🍑 실전형 업무 시뮬레이터 for 신입</h1>
-          <p>업무 매뉴얼을 업로드하고 역할별 시나리오를 반복 연습하며 피드백으로 역량을 높이세요.</p>
+        <header className="hero hero-gpt">
+          <div className="hero-heading">
+            <span className="hero-badge subtle">ChatGPT 5.1 Thinking Inspired</span>
+            <h1>무엇을 도와드릴까요?</h1>
+            <p>업무 매뉴얼을 불러오고 역할별 대화를 바로 시작해보세요.</p>
+          </div>
+          <div className="prompt-shell">
+            <span>무엇이든 물어보세요</span>
+            <div className="prompt-controls">
+              <select value={providerConfig.provider} onChange={handleProviderChange}>
+                {Object.entries(PROVIDER_LABELS).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <select value={providerConfig.model} onChange={handleModelChange}>
+                {providerModels.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
+              {providerConfig.provider !== 'ollama' && (
+                <input
+                  type="password"
+                  placeholder="API Key"
+                  value={providerConfig.apiKey ?? ''}
+                  onChange={handleApiKeyChange}
+                />
+              )}
+            </div>
+          </div>
+          <div className="prompt-chips">
+            {PROMPT_SUGGESTIONS.map((item) => (
+              <button type="button" key={item.title} className="prompt-chip">
+                <strong>{item.title}</strong>
+                <span>{item.description}</span>
+              </button>
+            ))}
+          </div>
+          <div className="hero-membership">
+            <div>
+              <span className="hero-label">워크스페이스 상태</span>
+              <strong>{isGuestMode ? '게스트 · 임시 저장' : '직원 워크스페이스'}</strong>
+              <p>
+                {isGuestMode
+                  ? '로그인하면 모든 대화와 파일이 안전하게 보관됩니다.'
+                  : `${user?.email ?? '연결된 계정'} · 매뉴얼과 대화가 동기화됩니다.`}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={isGuestMode ? handleRequestAuth : undefined}
+              disabled={!isGuestMode}
+            >
+              {isGuestMode ? '로그인하고 동기화' : '연결됨'}
+            </button>
+          </div>
+          <p className="hero-storage">
+            {isGuestMode
+              ? '게스트 모드는 이 브라우저에만 기록이 저장됩니다.'
+              : '로그인 상태에서는 모든 대화와 매뉴얼이 안전하게 DB에 저장됩니다.'}
+          </p>
         </header>
 
         {isGuestMode && (
@@ -609,71 +841,113 @@ function App() {
 
         {error && <div className="error-banner">{error}</div>}
 
-        <ManualWorkspace
-          manualStats={manualStats}
-          uploading={uploading}
-          embedRatio={embedRatio}
-          onEmbedRatioChange={setEmbedRatio}
-          onUpload={handleManualUpload}
-          disabled={manualWorkspaceDisabled}
-          isGuestMode={isGuestMode}
-          onRequestAuth={isGuestMode ? handleRequestAuth : undefined}
-        />
-
-        {!manualStats && (
-          <section className="guide-panel">
-            <div className="guide-header">
-              <p>신입 직원을 위한 고객 응대 연습 도구</p>
-              <h2>시작하기</h2>
-            </div>
-            <div className="guide-steps">
-              {GUIDE_STEPS.map((step, index) => (
-                <article className="guide-step" key={step.title}>
-                  <div className="guide-step-number">{index + 1}</div>
-                  <div>
-                    <h3>{step.title}</h3>
-                    <p>{step.description}</p>
-                    <ul>
-                      {step.details.map((detail) => (
-                        <li key={detail}>{detail}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {manualStats && (
-          <section className="roles-section">
-            <RoleCard
-              label="👤 고객 역할"
-              description="AI 직원에게 문의하며 고객 입장을 체험합니다."
-              icon="🧑"
-              onClick={() => startRole('customer')}
-              disabled={!canStart}
-            />
-            <RoleCard
-              label="👔 직원 역할"
-              description="AI 고객의 다양한 질문에 응답하며 실전 연습을 진행합니다."
-              icon="💼"
-              onClick={() => startRole('employee')}
-              disabled={!canStart}
-            />
-          </section>
-        )}
+        <section className="home-grid">
+          <ManualWorkspace
+            manualStats={manualStats}
+            uploading={uploading}
+            embedRatio={embedRatio}
+            onEmbedRatioChange={setEmbedRatio}
+            onUpload={handleManualUpload}
+            disabled={manualWorkspaceDisabled}
+            isGuestMode={isGuestMode}
+            onRequestAuth={isGuestMode ? handleRequestAuth : undefined}
+          />
+          <div className="home-side-panel">
+            <article className="home-panel-card">
+              <div className="home-panel-header">
+                <div>
+                  <h3>역할 시뮬레이션</h3>
+                  <p>업로드한 자료를 바탕으로 고객/직원 역할을 연습하세요.</p>
+                </div>
+                <span className={`status-pill ${manualStats ? 'ready' : 'idle'}`}>
+                  {manualStats ? 'Ready' : '자료 필요'}
+                </span>
+              </div>
+              {manualStats ? (
+                <div className="roles-list">
+                  <RoleCard
+                    label="👤 고객 역할"
+                    description="AI 직원에게 문의하며 고객 시선을 체험합니다."
+                    icon="🧑"
+                    onClick={() => startRole('customer')}
+                    disabled={!canStart}
+                  />
+                  <RoleCard
+                    label="👔 직원 역할"
+                    description="AI 고객 문의에 응답하며 실전 감각을 키워보세요."
+                    icon="💼"
+                    onClick={() => startRole('employee')}
+                    disabled={!canStart}
+                  />
+                </div>
+              ) : (
+                <div className="home-placeholder">
+                  <p>왼쪽에서 매뉴얼을 업로드하면 역할 모드를 바로 실행할 수 있어요.</p>
+                </div>
+              )}
+            </article>
+            <article className="home-panel-card stats-panel">
+              <div className="home-panel-header">
+                <div>
+                  <h3>진행 현황</h3>
+                  <p>연습 기록이 누적될수록 개인화가 정교해집니다.</p>
+                </div>
+              </div>
+              <div className="mini-stats-grid">
+                <div>
+                  <span>총 시뮬레이션</span>
+                  <strong>{stats.totalSimulations}</strong>
+                </div>
+                <div>
+                  <span>고객 역할</span>
+                  <strong>{stats.customerRoleCount}</strong>
+                </div>
+                <div>
+                  <span>직원 역할</span>
+                  <strong>{stats.employeeRoleCount}</strong>
+                </div>
+                <div>
+                  <span>평균 점수</span>
+                  <strong>
+                    {stats.totalSimulations
+                      ? `${Math.round((stats.totalScore / stats.totalSimulations) * 10) / 10}/15`
+                      : '-'}
+                  </strong>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
 
         {showSimulationPanel && (
           <section className="simulation-section">
             <div className="section-header">
-              {role ? (
-                <span className={`role-pill ${role}`}>
-                  {role === 'customer' ? '고객 모드' : '직원 모드'}
-                </span>
-              ) : (
-                <span className="role-pill neutral">대화 기록</span>
-              )}
+              <div className="section-title">
+                {displayRole ? (
+                  <span className={`role-pill ${displayRole}`}>
+                    {displayRole === 'customer' ? '고객 모드' : '직원 모드'}
+                  </span>
+                ) : (
+                  <span className="role-pill neutral">대화 기록</span>
+                )}
+                <button
+                  type="button"
+                  className={`role-toggle ${displayRole ?? 'neutral'}`}
+                  onClick={handleToggleRole}
+                  disabled={!manualStats || loadingResponse || !displayRole}
+                >
+                  <span className={`toggle-icon ${displayRole === 'customer' ? 'flipped' : ''}`}>
+                    ↺
+                  </span>
+                  <span>
+                    {displayRole
+                      ? displayRole === 'customer'
+                        ? '직원 모드로 전환'
+                        : '고객 모드로 전환'
+                      : '역할 선택 필요'}
+                  </span>
+                </button>
+              </div>
               <div className="section-actions">
                 {role === 'employee' && (
                   <button
@@ -693,7 +967,7 @@ function App() {
               </div>
             </div>
 
-            {!role && (
+            {!displayRole && (
               <p className="section-subtext">역할을 선택하면 새 메시지를 보낼 수 있어요.</p>
             )}
 

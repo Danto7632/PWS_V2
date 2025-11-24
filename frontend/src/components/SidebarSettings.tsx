@@ -1,37 +1,7 @@
-import { useMemo, useState } from 'react';
-import type { ChangeEvent } from 'react';
-import type {
-  ProviderConfig,
-  StatsSnapshot,
-  OllamaStatus,
-  ConversationSummary,
-} from '../types';
-
-const PROVIDER_LABELS = {
-  ollama: '로컬 (Ollama)',
-  openai: 'OpenAI GPT',
-  gemini: 'Google Gemini',
-};
-
-const OLLAMA_DEFAULT_MODELS = [
-  'exaone3.5:2.4b-jetson',
-  'llama3.2',
-  'gemma2',
-];
-
-const OPENAI_MODELS = ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'gpt-4o'];
-const GEMINI_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro',
-];
+import { useState } from 'react';
+import type { ConversationSummary } from '../types';
 
 type Props = {
-  providerConfig: ProviderConfig;
-  onProviderConfigChange: (config: ProviderConfig) => void;
-  stats: StatsSnapshot;
-  ollamaStatus: OllamaStatus | null;
   conversations: ConversationSummary[];
   activeConversationId: string | null;
   conversationLoading: boolean;
@@ -44,10 +14,6 @@ type Props = {
 };
 
 export function SidebarSettings({
-  providerConfig,
-  onProviderConfigChange,
-  stats,
-  ollamaStatus,
   conversations,
   activeConversationId,
   conversationLoading,
@@ -60,24 +26,6 @@ export function SidebarSettings({
 }: Props) {
   const [conversationError, setConversationError] = useState<string | null>(null);
   const [conversationActionLoading, setConversationActionLoading] = useState(false);
-
-  const ollamaModels = useMemo(() => {
-    if (ollamaStatus?.connected && ollamaStatus.models?.length) {
-      return ollamaStatus.models;
-    }
-    return OLLAMA_DEFAULT_MODELS;
-  }, [ollamaStatus]);
-
-  const providerModels = useMemo(() => {
-    switch (providerConfig.provider) {
-      case 'openai':
-        return OPENAI_MODELS;
-      case 'gemini':
-        return GEMINI_MODELS;
-      default:
-        return ollamaModels;
-    }
-  }, [providerConfig.provider, ollamaModels]);
 
   const handleConversationError = (err: unknown) => {
     setConversationError((err as Error).message ?? '대화 작업 중 오류가 발생했습니다.');
@@ -128,39 +76,12 @@ export function SidebarSettings({
     }
   };
 
-  const handleProviderChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const provider = event.target.value as ProviderConfig['provider'];
-    const nextModels = (() => {
-      if (provider === 'openai') return OPENAI_MODELS;
-      if (provider === 'gemini') return GEMINI_MODELS;
-      return ollamaModels;
-    })();
-    onProviderConfigChange({
-      ...providerConfig,
-      provider,
-      model: nextModels[0],
-      apiKey: provider === 'ollama' ? undefined : providerConfig.apiKey,
-    });
-  };
-
-  const handleModelChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    onProviderConfigChange({ ...providerConfig, model: event.target.value });
-  };
-
-  const handleApiKeyChange = (event: ChangeEvent<HTMLInputElement>) => {
-    onProviderConfigChange({ ...providerConfig, apiKey: event.target.value });
-  };
-
   const renderConversationSection = () => {
     if (isGuestMode) {
       return (
         <div className="guest-conversation-placeholder">
-          <p>게스트 모드에서는 대화와 업로드 이력이 저장되지 않습니다.</p>
-          <button
-            type="button"
-            className="ghost-btn"
-            onClick={() => onRequestAuth?.()}
-          >
+          <p>게스트 모드는 하나의 임시 대화만 제공합니다.</p>
+          <button type="button" className="ghost-btn" onClick={() => onRequestAuth?.()}>
             🔐 로그인하고 저장하기
           </button>
         </div>
@@ -168,7 +89,7 @@ export function SidebarSettings({
     }
     return (
       <>
-        <div className="conversation-list">
+        <div className="conversation-list sleek">
           {conversationLoading && !conversations.length ? (
             <p className="conversation-placeholder">대화를 불러오는 중...</p>
           ) : conversations.length ? (
@@ -176,7 +97,7 @@ export function SidebarSettings({
               <button
                 key={conversation.id}
                 type="button"
-                className={`conversation-item ${
+                className={`conversation-item minimal ${
                   conversation.id === activeConversationId ? 'active' : ''
                 }`}
                 onClick={() => onSelectConversation(conversation.id)}
@@ -230,88 +151,29 @@ export function SidebarSettings({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-section conversation-section">
-        <div className="conversation-header">
-          <h2>💬 대화 목록</h2>
-          {!isGuestMode && (
-            <button
-              type="button"
-              className="ghost-btn"
-              onClick={handleCreateConversation}
-              disabled={conversationLoading || conversationActionLoading}
-            >
-              ➕ 새 대화
-            </button>
-          )}
+      <div className="sidebar-header">
+        <div>
+          <strong>ChatGPT 5.1 Thinking</strong>
+          <p>대화 기록</p>
         </div>
-        {renderConversationSection()}
-      </div>
-
-      <div className="sidebar-section">
-        <h2>⚙️ AI 설정</h2>
-        <label className="select-label">
-          공급자
-          <select value={providerConfig.provider} onChange={handleProviderChange}>
-            {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="select-label">
-          모델
-          <select value={providerConfig.model} onChange={handleModelChange}>
-            {providerModels.map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </select>
-        </label>
-        {providerConfig.provider !== 'ollama' && (
-          <label className="select-label">
-            API Key
-            <input
-              type="password"
-              placeholder="API Key 입력"
-              value={providerConfig.apiKey ?? ''}
-              onChange={handleApiKeyChange}
-            />
-          </label>
-        )}
-        {ollamaStatus && (
-          <div className={`ollama-status ${ollamaStatus.connected ? 'ok' : 'warn'}`}>
-            {ollamaStatus.connected ? '✅ Ollama 연결됨' : '⚠️ Ollama 연결 실패'}
-          </div>
+        {!isGuestMode && (
+          <button
+            type="button"
+            className="new-chat-btn"
+            onClick={handleCreateConversation}
+            disabled={conversationLoading || conversationActionLoading}
+          >
+            + 새 채팅
+          </button>
         )}
       </div>
-
-      <div className="sidebar-section">
-        <h2>📊 학습 통계</h2>
-        <div className="stats-grid">
-          <div className="stats-card">
-            <span>총 시뮬레이션</span>
-            <strong>{stats.totalSimulations}</strong>
-          </div>
-          <div className="stats-card">
-            <span>고객 역할</span>
-            <strong>{stats.customerRoleCount}</strong>
-          </div>
-          <div className="stats-card">
-            <span>직원 역할</span>
-            <strong>{stats.employeeRoleCount}</strong>
-          </div>
-          <div className="stats-card">
-            <span>평균 점수</span>
-            <strong>
-              {stats.totalSimulations
-                ? `${Math.round((stats.totalScore / stats.totalSimulations) * 10) / 10}/15`
-                : ' - '}
-            </strong>
-          </div>
-        </div>
-      </div>
+      {renderConversationSection()}
+      <footer className="sidebar-footer">
+        <span>© {new Date().getFullYear()} Genius Otter</span>
+        <button type="button" className="link-btn" onClick={() => onRequestAuth?.()}>
+          계정 관리
+        </button>
+      </footer>
     </aside>
   );
 }
