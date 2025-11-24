@@ -11,7 +11,6 @@ import { ManualIngestRequestDto } from './dto/manual-request.dto';
 import * as path from 'path';
 import { promises as fs } from 'fs';
 import * as XLSX from 'xlsx';
-import pdfParse from 'pdf-parse';
 import { DatabaseService } from '../database/database.service';
 
 export interface ManualCacheRecord {
@@ -22,8 +21,27 @@ export interface ManualCacheRecord {
   updatedAt: string;
 }
 
-type PdfParser = (dataBuffer: Buffer) => Promise<{ text: string }>;
-const parsePdf: PdfParser = pdfParse as unknown as PdfParser;
+async function parsePdfBuffer(buffer: Buffer): Promise<string> {
+  const { PDFParse } = await importPdfParse();
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const result = await parser.getText();
+    return result.text ?? '';
+  } finally {
+    await parser.destroy();
+  }
+}
+
+type PdfParseModule = typeof import('pdf-parse');
+
+function importPdfParse(): Promise<PdfParseModule> {
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const dynamicImport = new Function(
+    'specifier',
+    'return import(specifier);',
+  ) as (specifier: string) => Promise<PdfParseModule>;
+  return dynamicImport('pdf-parse');
+}
 
 @Injectable()
 export class ManualsService implements OnModuleInit {
@@ -170,8 +188,7 @@ export class ManualsService implements OnModuleInit {
   private async extractText(file: Express.Multer.File): Promise<string> {
     const mime = file.mimetype;
     if (mime === 'application/pdf') {
-      const parsed = await parsePdf(file.buffer);
-      return parsed.text;
+      return parsePdfBuffer(file.buffer);
     }
     if (mime === 'text/plain') {
       return file.buffer.toString('utf8');
