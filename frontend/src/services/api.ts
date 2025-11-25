@@ -10,6 +10,7 @@ import type {
   ConversationSummary,
   ManualStatusResponse,
 } from '../types';
+import { normalizeManualStats, type ManualStatsLike } from '../utils/manuals';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
 
@@ -99,11 +100,16 @@ export async function uploadManuals(
   }
   const guest = Boolean(options?.guest);
   const path = guest ? '/api/guest/manuals' : '/api/manuals';
-  return request<ManualStats>(path, {
+  const response = await request<ManualStatsLike>(path, {
     method: 'POST',
     body: formData,
     auth: !guest,
   });
+  const normalized = normalizeManualStats(response);
+  if (!normalized) {
+    throw new Error('매뉴얼 정보를 불러오지 못했습니다.');
+  }
+  return normalized;
 }
 
 export async function fetchManualStatus(
@@ -114,10 +120,26 @@ export async function fetchManualStatus(
   const path = guest
     ? `/api/guest/manuals/${conversationId}/status`
     : `/api/manuals/${conversationId}/status`;
-  const response = await request<ManualStatusResponse>(path, {
+  const response = await request<ManualStatusResponse<ManualStatsLike>>(path, {
     auth: !guest,
   });
-  return response.hasManual ? response.stats ?? null : null;
+  return response.hasManual ? normalizeManualStats(response.stats ?? null) : null;
+}
+
+export async function deleteManualSource(
+  conversationId: string,
+  sourceId: string,
+  options?: GuestOptions,
+): Promise<ManualStats | null> {
+  const guest = Boolean(options?.guest);
+  const path = guest
+    ? `/api/guest/manuals/${conversationId}/sources/${sourceId}`
+    : `/api/manuals/${conversationId}/sources/${sourceId}`;
+  const response = await request<ManualStatusResponse<ManualStatsLike>>(path, {
+    method: 'DELETE',
+    auth: !guest,
+  });
+  return response.hasManual ? normalizeManualStats(response.stats ?? null) : null;
 }
 
 export async function generateScenario(

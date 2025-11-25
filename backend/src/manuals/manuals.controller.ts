@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -85,6 +86,25 @@ export class ManualsController {
   ): Promise<ManualStatusResponseDto> {
     const status: ManualStatusPayload =
       await this.manualsService.getManualStatusForUser(conversationId, user);
+    return {
+      hasManual: status.hasManual,
+      stats: status.stats,
+    };
+  }
+
+  @Delete(':conversationId/sources/:sourceId')
+  @ApiOperation({ summary: '업로드한 자료 하나를 삭제하고 벡터 스토어를 재구성합니다.' })
+  @ApiOkResponse({ type: ManualStatusResponseDto })
+  async removeSource(
+    @Param('conversationId') conversationId: string,
+    @Param('sourceId') sourceId: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ManualStatusResponseDto> {
+    const status = await this.manualsService.removeSource(
+      conversationId,
+      sourceId,
+      user,
+    );
     return {
       hasManual: status.hasManual,
       stats: status.stats,

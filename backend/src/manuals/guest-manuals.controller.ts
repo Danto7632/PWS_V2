@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -69,6 +70,23 @@ export class GuestManualsController {
   ): Promise<ManualStatusResponseDto> {
     const status: ManualStatusPayload =
       await this.manualsService.getManualStatus(conversationId);
+    return {
+      hasManual: status.hasManual,
+      stats: status.stats,
+    };
+  }
+
+  @Delete(':conversationId/sources/:sourceId')
+  @ApiOperation({ summary: '게스트 세션 자료 삭제 및 재구성' })
+  @ApiOkResponse({ type: ManualStatusResponseDto })
+  async removeSource(
+    @Param('conversationId') conversationId: string,
+    @Param('sourceId') sourceId: string,
+  ): Promise<ManualStatusResponseDto> {
+    const status = await this.manualsService.removeSource(
+      conversationId,
+      sourceId,
+    );
     return {
       hasManual: status.hasManual,
       stats: status.stats,

@@ -69,6 +69,13 @@ export class VectorStoreService implements OnModuleInit {
     await this.persist();
   }
 
+  async clearDocuments(conversationId: string) {
+    if (this.documentsByConversation[conversationId]) {
+      delete this.documentsByConversation[conversationId];
+      await this.persist();
+    }
+  }
+
   async persist() {
     await fs.writeFile(
       this.storageFile,

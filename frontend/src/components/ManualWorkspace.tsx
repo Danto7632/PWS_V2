@@ -14,6 +14,7 @@ type Props = {
   embedRatio: number;
   onEmbedRatioChange: (value: number) => void;
   onUpload: (files: File[], ratio: number, instructionText?: string) => Promise<void>;
+  onRemoveSource?: (sourceId: string) => Promise<void>;
   disabled: boolean;
   isGuestMode: boolean;
   onRequestAuth?: () => void;
@@ -25,6 +26,7 @@ export function ManualWorkspace({
   embedRatio,
   onEmbedRatioChange,
   onUpload,
+  onRemoveSource,
   disabled,
   isGuestMode,
   onRequestAuth,
@@ -32,10 +34,13 @@ export function ManualWorkspace({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [instructionText, setInstructionText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const hasContent = selectedFiles.length > 0 || instructionText.trim().length > 0;
   const canSubmit = !disabled && hasContent && !uploading;
+  const storedSources = manualStats?.sources ?? [];
+  const summaryEmbedRatio = manualStats?.embedRatio ?? embedRatio;
 
   const lastUpdatedText = useMemo(() => {
     if (!manualStats?.updatedAt) return null;
@@ -87,6 +92,19 @@ export function ManualWorkspace({
       resetForm();
     } catch (err) {
       setError((err as Error).message ?? '매뉴얼 업로드 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleRemoveSource = async (sourceId: string) => {
+    if (!onRemoveSource) return;
+    setError(null);
+    setRemovingId(sourceId);
+    try {
+      await onRemoveSource(sourceId);
+    } catch (err) {
+      setError((err as Error).message ?? '자료 삭제 중 오류가 발생했습니다.');
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -185,7 +203,46 @@ export function ManualWorkspace({
               <p>
                 최근 학습: <strong>{lastUpdatedText ?? '방금 전'}</strong>
               </p>
-              <p>파일 {manualStats.fileCount}개 · 청크 {manualStats.chunkCount}개 · 임베딩 {manualStats.embeddedChunks}개</p>
+              <p>
+                파일 {manualStats.fileCount}개 · 청크 {manualStats.chunkCount}개 · 임베딩 {manualStats.embeddedChunks}개 · 반영률{' '}
+                {Math.round(summaryEmbedRatio * 100)}%
+              </p>
+              {storedSources.length > 0 && (
+                <div className="manual-sources">
+                  <h3>저장된 자료</h3>
+                  <ul>
+                    {storedSources.map((source) => {
+                      let createdText = source.createdAt;
+                      try {
+                        createdText = new Date(source.createdAt).toLocaleString('ko-KR');
+                      } catch {
+                        // ignore parsing error
+                      }
+                      return (
+                        <li key={source.id}>
+                          <div>
+                            <strong>{source.label}</strong>
+                            <span>
+                              · {source.type === 'instruction' ? '프롬프트' : '파일'} · {createdText}
+                            </span>
+                            {source.preview && <p className="manual-source-preview">{source.preview}</p>}
+                          </div>
+                          {onRemoveSource && (
+                            <button
+                              type="button"
+                              className="ghost-btn"
+                              disabled={removingId === source.id || uploading}
+                              onClick={() => handleRemoveSource(source.id)}
+                            >
+                              {removingId === source.id ? '삭제 중...' : '삭제'}
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
             </div>
           ) : (
             <p className="manual-placeholder">아직 업로드된 매뉴얼이 없습니다. 자료를 추가해 시뮬레이션을 시작하세요.</p>

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ConversationSummary } from '../types';
+import { ChatLogo } from './ChatLogo';
 
 type Props = {
   conversations: ConversationSummary[];
@@ -11,6 +12,9 @@ type Props = {
   onDeleteConversation: (conversationId: string) => Promise<void>;
   isGuestMode: boolean;
   onRequestAuth?: () => void;
+  userName?: string;
+  userEmail?: string;
+  onToggleSidebar: () => void;
 };
 
 export function SidebarSettings({
@@ -23,6 +27,9 @@ export function SidebarSettings({
   onDeleteConversation,
   isGuestMode,
   onRequestAuth,
+  userName,
+  userEmail,
+  onToggleSidebar,
 }: Props) {
   const [conversationError, setConversationError] = useState<string | null>(null);
   const [conversationActionLoading, setConversationActionLoading] = useState(false);
@@ -94,14 +101,24 @@ export function SidebarSettings({
             <p className="conversation-placeholder">대화를 불러오는 중...</p>
           ) : conversations.length ? (
             conversations.map((conversation) => (
-              <button
+              <div
                 key={conversation.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 className={`conversation-item minimal ${
                   conversation.id === activeConversationId ? 'active' : ''
-                }`}
-                onClick={() => onSelectConversation(conversation.id)}
-                disabled={conversationActionLoading}
+                } ${conversationActionLoading ? 'disabled' : ''}`}
+                onClick={() => {
+                  if (conversationActionLoading) return;
+                  onSelectConversation(conversation.id);
+                }}
+                onKeyDown={(event) => {
+                  if (conversationActionLoading) return;
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelectConversation(conversation.id);
+                  }
+                }}
               >
                 <div>
                   <strong>{conversation.title}</strong>
@@ -138,7 +155,7 @@ export function SidebarSettings({
                     🗑️
                   </button>
                 </div>
-              </button>
+              </div>
             ))
           ) : (
             <p className="conversation-placeholder">아직 생성된 대화가 없습니다.</p>
@@ -151,10 +168,27 @@ export function SidebarSettings({
 
   return (
     <aside className="sidebar">
+      <div className="sidebar-brand">
+        <div className="sidebar-brand__logo" aria-label="메인 로고" role="img">
+          <ChatLogo className="chat-logo-icon" />
+        </div>
+        <button
+          type="button"
+          className="sidebar-toggle inline"
+          onClick={onToggleSidebar}
+          aria-label="사이드바 닫기"
+          title="사이드바 닫기"
+        >
+          <span className="sidebar-toggle-icon" aria-hidden="true">
+            <span />
+            <span />
+          </span>
+          <span className="sr-only">사이드바 닫기</span>
+        </button>
+      </div>
       <div className="sidebar-header">
         <div>
-          <strong>ChatGPT 5.1 Thinking</strong>
-          <p>대화 기록</p>
+          <p className="sidebar-label">대화 기록</p>
         </div>
         {!isGuestMode && (
           <button
@@ -169,10 +203,20 @@ export function SidebarSettings({
       </div>
       {renderConversationSection()}
       <footer className="sidebar-footer">
-        <span>© {new Date().getFullYear()} Genius Otter</span>
-        <button type="button" className="link-btn" onClick={() => onRequestAuth?.()}>
-          계정 관리
-        </button>
+        <div className="sidebar-user">
+          <div className="sidebar-avatar">
+            {(userName?.[0] ?? (isGuestMode ? 'G' : 'U')).toUpperCase()}
+          </div>
+          <div>
+            <strong>{userName ?? (isGuestMode ? '게스트' : '사용자')}</strong>
+            <span>{isGuestMode ? '로그인 필요' : userEmail ?? ''}</span>
+          </div>
+        </div>
+        <div className="sidebar-footer-actions">
+          <button type="button" className="link-btn" onClick={() => onRequestAuth?.()}>
+            계정 관리
+          </button>
+        </div>
       </footer>
     </aside>
   );

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ManualIngestRequestDto {
@@ -24,4 +24,14 @@ export class ManualIngestRequestDto {
   @IsOptional()
   @IsString()
   instructionText?: string;
+
+  @ApiPropertyOptional({
+    description: '기존 자료에 추가할지 여부 (append|replace)',
+    enum: ['append', 'replace'],
+    default: 'append',
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['append', 'replace'])
+  mode?: 'append' | 'replace';
 }

@@ -7,12 +7,10 @@ import type {
   ChatMessage,
   Evaluation,
   Scenario,
-  StatsSnapshot,
   OllamaStatus,
   ConversationSummary,
 } from './types';
 import { SidebarSettings } from './components/SidebarSettings';
-import { RoleCard } from './components/RoleCard';
 import { ChatWindow } from './components/ChatWindow';
 import { EvaluationPanel } from './components/EvaluationPanel';
 import {
@@ -27,10 +25,13 @@ import {
   deleteConversation,
   fetchConversationMessages,
   fetchManualStatus,
+  deleteManualSource,
 } from './services/api';
 import { AuthPanel } from './components/AuthPanel';
 import { ManualWorkspace } from './components/ManualWorkspace';
 import { useAuth } from './context/AuthContext';
+import { normalizeManualStats } from './utils/manuals';
+import { ChatLogo } from './components/ChatLogo';
 
 const DEFAULT_PROVIDER: ProviderConfig = {
   provider: 'ollama',
@@ -47,27 +48,7 @@ const OPENAI_MODELS = ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'gpt-4o'];
 const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 const OLLAMA_DEFAULT_MODELS = ['exaone3.5:2.4b-jetson', 'llama3.2', 'gemma2'];
 
-const INITIAL_STATS: StatsSnapshot = {
-  totalSimulations: 0,
-  customerRoleCount: 0,
-  employeeRoleCount: 0,
-  totalScore: 0,
-};
 
-const PROMPT_SUGGESTIONS = [
-  {
-    title: '고객 불만 응대',
-    description: '감정 완화용 스크립트를 추천받으세요.',
-  },
-  {
-    title: '상품 업셀링 멘트',
-    description: '친절한 보조 상품 제안법을 연습해보세요.',
-  },
-  {
-    title: 'CS FAQ 작성',
-    description: '반복 질문을 자동화할 답변을 만들어보세요.',
-  },
-];
 
 const sortConversationsByUpdated = (items: ConversationSummary[]) =>
   [...items].sort(
@@ -102,10 +83,13 @@ const readGuestSnapshot = (): GuestSessionSnapshot => {
   }
   try {
     const parsed = JSON.parse(raw) as Partial<GuestSessionSnapshot>;
+    const normalizedManualStats = normalizeManualStats(
+      parsed.manualStats as ManualStats | undefined,
+    );
     return {
       conversationId: parsed.conversationId ?? crypto.randomUUID(),
       messages: Array.isArray(parsed.messages) ? (parsed.messages as ChatMessage[]) : [],
-      manualStats: parsed.manualStats ?? null,
+      manualStats: normalizedManualStats,
       role: (parsed.role as Role | null | undefined) ?? null,
     };
   } catch {
@@ -140,11 +124,11 @@ function App() {
   );
   const typingTimers = useRef<Map<string, number>>(new Map());
   const roleInitRef = useRef(false);
+  const modelSwitcherRef = useRef<HTMLDivElement | null>(null);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [loadingResponse, setLoadingResponse] = useState(false);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [scenario, setScenario] = useState<Scenario | null>(null);
-  const [stats, setStats] = useState<StatsSnapshot>(INITIAL_STATS);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [guestConversationId, setGuestConversationId] = useState(
@@ -162,6 +146,9 @@ function App() {
     ? conversationRoleMap[guestConversationId] ?? null
     : null;
   const manualStatusSessionRef = useRef<string | null>(sessionConversationId);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [manualEditorOpen, setManualEditorOpen] = useState(false);
   const ollamaModels = useMemo(() => {
     if (ollamaStatus?.connected && ollamaStatus.models?.length) {
       return ollamaStatus.models;
@@ -212,6 +199,23 @@ function App() {
       .then(setOllamaStatus)
       .catch(() => setOllamaStatus({ connected: false, error: '연결 실패' }));
   }, []);
+
+  useEffect(() => {
+    if (!modelMenuOpen) {
+      return;
+    }
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!modelSwitcherRef.current) return;
+      if (modelSwitcherRef.current.contains(event.target as Node)) {
+        return;
+      }
+      setModelMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [modelMenuOpen]);
 
   useEffect(() => {
     if (!isGuestMode) {
@@ -381,6 +385,12 @@ function App() {
     };
   }, [sessionConversationId, isGuestMode]);
 
+  useEffect(() => {
+    if (!manualStats) {
+      setManualEditorOpen(false);
+    }
+  }, [manualStats]);
+
   const appendMessage = useCallback((message: ChatMessage) => {
     setMessages((prev) => [...prev, message]);
   }, []);
@@ -526,6 +536,7 @@ function App() {
         { guest: isGuestMode },
       );
       setManualStats(result);
+      setManualEditorOpen(false);
       setRole(null);
       resetSession();
       setConversationRoleMap((prev) => {
@@ -546,6 +557,62 @@ function App() {
       setUploading(false);
     }
   };
+
+  const handleCollapsedNewChat = useCallback(() => {
+    if (isGuestMode) {
+      handleRequestAuth();
+      return;
+    }
+    void handleCreateConversation();
+  }, [handleCreateConversation, handleRequestAuth, isGuestMode]);
+
+  const handleCollapsedSearch = useCallback(() => {
+    setSidebarOpen(true);
+  }, [setSidebarOpen]);
+
+  const handleCollapsedManual = useCallback(() => {
+    if (!manualStats) {
+      setError('업로드된 매뉴얼이 없습니다. 자료를 추가해 주세요.');
+      return;
+    }
+    setManualEditorOpen(true);
+  }, [manualStats, setError, setManualEditorOpen]);
+
+  const handleCollapsedAuth = useCallback(() => {
+    if (isGuestMode) {
+      handleRequestAuth();
+      return;
+    }
+    logout();
+  }, [handleRequestAuth, isGuestMode, logout]);
+
+  const handleRemoveManualSource = useCallback(
+    async (sourceId: string) => {
+      const targetConversationId = sessionConversationId;
+      if (!targetConversationId) {
+        const err = new Error('대화를 선택하거나 생성한 후 자료를 삭제하세요.');
+        setError(err.message);
+        throw err;
+      }
+      try {
+        const stats = await deleteManualSource(targetConversationId, sourceId, {
+          guest: isGuestMode,
+        });
+        setManualStats(stats);
+        if (!stats) {
+          setRole(null);
+          resetSession();
+        }
+        if (!isGuestMode) {
+          touchActiveConversation();
+        }
+      } catch (err) {
+        setError((err as Error).message);
+        throw err;
+      }
+    },
+    [isGuestMode, resetSession, sessionConversationId, touchActiveConversation],
+  );
 
   const ensureManualReady = useCallback(() => {
     if (!manualStats) {
@@ -570,12 +637,6 @@ function App() {
         sessionConversationId ? { ...prev, [sessionConversationId]: nextRole } : prev,
       );
       resetSession();
-      setStats((prev) => ({
-        ...prev,
-        customerRoleCount: nextRole === 'customer' ? prev.customerRoleCount + 1 : prev.customerRoleCount,
-        employeeRoleCount: nextRole === 'employee' ? prev.employeeRoleCount + 1 : prev.employeeRoleCount,
-      }));
-
       if (nextRole === 'employee') {
         setLoadingResponse(true);
         try {
@@ -635,11 +696,6 @@ function App() {
         if (response.nextCustomerMessage) {
           addAssistantMessage(response.nextCustomerMessage, role);
         }
-        setStats((prev) => ({
-          ...prev,
-          totalSimulations: prev.totalSimulations + 1,
-          totalScore: prev.totalScore + response.evaluation.score,
-        }));
       }
       if (!isGuestMode) {
         touchActiveConversation();
@@ -682,9 +738,11 @@ function App() {
     void startRole(nextRole);
   };
 
-  const canStart = Boolean(manualStats) && !uploading;
   const manualWorkspaceDisabled = !sessionConversationId || conversationLoading;
-  const showSimulationPanel = Boolean(manualStats || messages.length);
+  const hasManualData = Boolean(manualStats);
+  const showManualInline = !hasManualData;
+  const showManualModal = hasManualData && manualEditorOpen;
+  const showSimulationPanel = hasManualData;
   const showEvaluationPanel = role === 'employee';
   const simulationGridClass = showEvaluationPanel ? 'simulation-grid' : 'simulation-grid single-column';
 
@@ -724,33 +782,159 @@ function App() {
           </div>
         </div>
       )}
-      <div className="app-shell">
-      <SidebarSettings
-        conversations={conversations}
-        activeConversationId={activeConversationId}
-        conversationLoading={conversationLoading}
-        onSelectConversation={handleSelectConversation}
-        onCreateConversation={handleCreateConversation}
-        onRenameConversation={handleRenameConversation}
-        onDeleteConversation={handleDeleteConversation}
-          isGuestMode={isGuestMode}
-          onRequestAuth={handleRequestAuth}
-      />
-      <main className="main-panel">
-        <div className="auth-topbar">
-            <div className={`user-chip ${isGuestMode ? 'guest' : ''}`}>
-              <span className="user-avatar">
-                {((isGuestMode ? 'G' : user?.displayName?.slice(0, 1)) ?? 'U').toUpperCase()}
-              </span>
-            <div>
-                <strong>{isGuestMode ? '게스트 모드' : user?.displayName}</strong>
-                <p>
-                  {isGuestMode
-                    ? '로그인 시 대화와 업로드 내역이 저장됩니다.'
-                    : user?.email}
-                </p>
+      <div className={`app-shell${sidebarOpen ? '' : ' sidebar-collapsed'}`}>
+        <div className={`sidebar-panel ${sidebarOpen ? 'open' : 'collapsed'}`}>
+          {sidebarOpen ? (
+            <SidebarSettings
+              conversations={conversations}
+              activeConversationId={activeConversationId}
+              conversationLoading={conversationLoading}
+              onSelectConversation={handleSelectConversation}
+              onCreateConversation={handleCreateConversation}
+              onRenameConversation={handleRenameConversation}
+              onDeleteConversation={handleDeleteConversation}
+              isGuestMode={isGuestMode}
+              onRequestAuth={handleRequestAuth}
+              userName={user?.displayName ?? undefined}
+              userEmail={user?.email ?? undefined}
+              onToggleSidebar={() => setSidebarOpen(false)}
+            />
+          ) : (
+            <div className="mini-sidebar" aria-label="사이드바 단축 메뉴">
+              <div className="mini-sidebar__logo" aria-label="메인 메뉴">
+                <button
+                  type="button"
+                  className="mini-sidebar__logo-button"
+                  onClick={() => setSidebarOpen(true)}
+                  aria-label="사이드바 열기"
+                >
+                  <ChatLogo className="chat-logo-icon" />
+                </button>
+                <button
+                  type="button"
+                  className="mini-sidebar__flyout"
+                  onClick={() => setSidebarOpen(true)}
+                  aria-label="사이드바 열기"
+                >
+                  <span className="sidebar-toggle-icon" aria-hidden="true">
+                    <span />
+                    <span />
+                  </span>
+                  <span>사이드바 열기</span>
+                </button>
+              </div>
+              {[
+                {
+                  key: 'new',
+                  icon: '+',
+                  label: '새 채팅',
+                  onClick: handleCollapsedNewChat,
+                  disabled: false,
+                },
+                {
+                  key: 'search',
+                  icon: '🔍',
+                  label: '채팅 목록 보기',
+                  onClick: handleCollapsedSearch,
+                  disabled: false,
+                },
+                {
+                  key: 'library',
+                  icon: '📚',
+                  label: manualStats ? '자료 관리' : '자료 업로드 필요',
+                  onClick: handleCollapsedManual,
+                  disabled: !manualStats,
+                },
+                {
+                  key: 'account',
+                  icon: isGuestMode ? '🔐' : '👤',
+                  label: isGuestMode ? '로그인 / 회원가입' : '계정 설정',
+                  onClick: handleCollapsedAuth,
+                  disabled: false,
+                },
+              ].map((action) => (
+                <button
+                  key={action.key}
+                  type="button"
+                  className="mini-sidebar__btn"
+                  onClick={action.onClick}
+                  disabled={action.disabled}
+                  title={action.label}
+                  aria-label={action.label}
+                >
+                  <span aria-hidden="true">{action.icon}</span>
+                  <span className="sr-only">{action.label}</span>
+                </button>
+              ))}
             </div>
-          </div>
+          )}
+        </div>
+        <main className="main-panel">
+          <header className="main-topbar">
+            <div className="topbar-left">
+              <button
+                type="button"
+                className={`sidebar-toggle ${sidebarOpen ? 'open' : 'closed'}`}
+                onClick={() => setSidebarOpen((prev) => !prev)}
+                aria-label={sidebarOpen ? '사이드바 닫기' : '사이드바 열기'}
+                title={sidebarOpen ? '사이드바 닫기' : '사이드바 열기'}
+              >
+                <span className="sidebar-toggle-icon" aria-hidden="true">
+                  <span />
+                  <span />
+                </span>
+                <span className="sr-only">
+                  {sidebarOpen ? '사이드바 닫기' : '사이드바 열기'}
+                </span>
+              </button>
+              <div className="model-switcher-wrapper" ref={modelSwitcherRef}>
+                <button
+                  type="button"
+                  className="model-switcher"
+                  onClick={() => setModelMenuOpen((prev) => !prev)}
+                  aria-haspopup="true"
+                  aria-expanded={modelMenuOpen}
+                >
+                  <span>{PROVIDER_LABELS[providerConfig.provider]}</span>
+                  <strong>{providerConfig.model}</strong>
+                </button>
+                {modelMenuOpen && (
+                  <div className="model-menu">
+                    <label>
+                      제공자
+                      <select value={providerConfig.provider} onChange={handleProviderChange}>
+                        {Object.entries(PROVIDER_LABELS).map(([key, label]) => (
+                          <option key={key} value={key}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      모델
+                      <select value={providerConfig.model} onChange={handleModelChange}>
+                        {providerModels.map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {providerConfig.provider !== 'ollama' && (
+                      <label>
+                        API Key
+                        <input
+                          type="password"
+                          placeholder="필요 시 입력"
+                          value={providerConfig.apiKey ?? ''}
+                          onChange={handleApiKeyChange}
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="topbar-actions">
               {isGuestMode ? (
                 <button type="button" className="primary-outline-btn" onClick={handleRequestAuth}>
@@ -762,231 +946,156 @@ function App() {
                 </button>
               )}
             </div>
-        </div>
-        <header className="hero hero-gpt">
-          <div className="hero-heading">
-            <span className="hero-badge subtle">ChatGPT 5.1 Thinking Inspired</span>
-            <h1>무엇을 도와드릴까요?</h1>
-            <p>업무 매뉴얼을 불러오고 역할별 대화를 바로 시작해보세요.</p>
-          </div>
-          <div className="prompt-shell">
-            <span>무엇이든 물어보세요</span>
-            <div className="prompt-controls">
-              <select value={providerConfig.provider} onChange={handleProviderChange}>
-                {Object.entries(PROVIDER_LABELS).map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <select value={providerConfig.model} onChange={handleModelChange}>
-                {providerModels.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-              {providerConfig.provider !== 'ollama' && (
-                <input
-                  type="password"
-                  placeholder="API Key"
-                  value={providerConfig.apiKey ?? ''}
-                  onChange={handleApiKeyChange}
-                />
-              )}
-            </div>
-          </div>
-          <div className="prompt-chips">
-            {PROMPT_SUGGESTIONS.map((item) => (
-              <button type="button" key={item.title} className="prompt-chip">
-                <strong>{item.title}</strong>
-                <span>{item.description}</span>
+          </header>
+
+          {isGuestMode && (
+            <div className="guest-banner">
+              <span>현재 게스트 모드입니다. 페이지를 새로고침하면 대화와 업로드한 파일이 초기화됩니다.</span>
+              <button type="button" className="link-btn" onClick={handleRequestAuth}>
+                로그인하고 저장하기
               </button>
-            ))}
-          </div>
-          <div className="hero-membership">
-            <div>
-              <span className="hero-label">워크스페이스 상태</span>
-              <strong>{isGuestMode ? '게스트 · 임시 저장' : '직원 워크스페이스'}</strong>
-              <p>
-                {isGuestMode
-                  ? '로그인하면 모든 대화와 파일이 안전하게 보관됩니다.'
-                  : `${user?.email ?? '연결된 계정'} · 매뉴얼과 대화가 동기화됩니다.`}
-              </p>
             </div>
-            <button
-              type="button"
-              className="ghost-btn"
-              onClick={isGuestMode ? handleRequestAuth : undefined}
-              disabled={!isGuestMode}
-            >
-              {isGuestMode ? '로그인하고 동기화' : '연결됨'}
-            </button>
-          </div>
-          <p className="hero-storage">
-            {isGuestMode
-              ? '게스트 모드는 이 브라우저에만 기록이 저장됩니다.'
-              : '로그인 상태에서는 모든 대화와 매뉴얼이 안전하게 DB에 저장됩니다.'}
-          </p>
-        </header>
+          )}
 
-        {isGuestMode && (
-          <div className="guest-banner">
-            <span>현재 게스트 모드입니다. 페이지를 새로고침하면 대화와 업로드한 파일이 초기화됩니다.</span>
-            <button type="button" className="link-btn" onClick={handleRequestAuth}>
-              로그인하고 저장하기
-            </button>
-          </div>
-        )}
+          {error && <div className="error-banner">{error}</div>}
 
-        {error && <div className="error-banner">{error}</div>}
-
-        <section className="home-grid">
-          <ManualWorkspace
-            manualStats={manualStats}
-            uploading={uploading}
-            embedRatio={embedRatio}
-            onEmbedRatioChange={setEmbedRatio}
-            onUpload={handleManualUpload}
-            disabled={manualWorkspaceDisabled}
-            isGuestMode={isGuestMode}
-            onRequestAuth={isGuestMode ? handleRequestAuth : undefined}
-          />
-          <div className="home-side-panel">
-            <article className="home-panel-card">
-              <div className="home-panel-header">
-                <div>
-                  <h3>역할 시뮬레이션</h3>
-                  <p>업로드한 자료를 바탕으로 고객/직원 역할을 연습하세요.</p>
-                </div>
-                <span className={`status-pill ${manualStats ? 'ready' : 'idle'}`}>
-                  {manualStats ? 'Ready' : '자료 필요'}
-                </span>
+          {showManualInline && (
+            <section className="manual-intro">
+              <div className="manual-intro__header">
+                <h1>대화용 매뉴얼 업로드 또는 프롬프트 입력</h1>
+                <p>좌측 대화를 선택하고 자료를 학습시키면 자동으로 채팅 모드가 열립니다.</p>
               </div>
-              {manualStats ? (
-                <div className="roles-list">
-                  <RoleCard
-                    label="👤 고객 역할"
-                    description="AI 직원에게 문의하며 고객 시선을 체험합니다."
-                    icon="🧑"
-                    onClick={() => startRole('customer')}
-                    disabled={!canStart}
-                  />
-                  <RoleCard
-                    label="👔 직원 역할"
-                    description="AI 고객 문의에 응답하며 실전 감각을 키워보세요."
-                    icon="💼"
-                    onClick={() => startRole('employee')}
-                    disabled={!canStart}
-                  />
-                </div>
-              ) : (
-                <div className="home-placeholder">
-                  <p>왼쪽에서 매뉴얼을 업로드하면 역할 모드를 바로 실행할 수 있어요.</p>
-                </div>
-              )}
-            </article>
-            <article className="home-panel-card stats-panel">
-              <div className="home-panel-header">
-                <div>
-                  <h3>진행 현황</h3>
-                  <p>연습 기록이 누적될수록 개인화가 정교해집니다.</p>
-                </div>
-              </div>
-              <div className="mini-stats-grid">
-                <div>
-                  <span>총 시뮬레이션</span>
-                  <strong>{stats.totalSimulations}</strong>
-                </div>
-                <div>
-                  <span>고객 역할</span>
-                  <strong>{stats.customerRoleCount}</strong>
-                </div>
-                <div>
-                  <span>직원 역할</span>
-                  <strong>{stats.employeeRoleCount}</strong>
-                </div>
-                <div>
-                  <span>평균 점수</span>
-                  <strong>
-                    {stats.totalSimulations
-                      ? `${Math.round((stats.totalScore / stats.totalSimulations) * 10) / 10}/15`
-                      : '-'}
-                  </strong>
-                </div>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        {showSimulationPanel && (
-          <section className="simulation-section">
-            <div className="section-header">
-              <div className="section-title">
-                {displayRole ? (
-                  <span className={`role-pill ${displayRole}`}>
-                    {displayRole === 'customer' ? '고객 모드' : '직원 모드'}
-                  </span>
-                ) : (
-                  <span className="role-pill neutral">대화 기록</span>
-                )}
-                <button
-                  type="button"
-                  className={`role-toggle ${displayRole ?? 'neutral'}`}
-                  onClick={handleToggleRole}
-                  disabled={!manualStats || loadingResponse || !displayRole}
-                >
-                  <span className={`toggle-icon ${displayRole === 'customer' ? 'flipped' : ''}`}>
-                    ↺
-                  </span>
-                  <span>
-                    {displayRole
-                      ? displayRole === 'customer'
-                        ? '직원 모드로 전환'
-                        : '고객 모드로 전환'
-                      : '역할 선택 필요'}
-                  </span>
-                </button>
-              </div>
-              <div className="section-actions">
-                {role === 'employee' && (
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    disabled={loadingResponse}
-                    onClick={() => startRole('employee')}
-                  >
-                    🔄 새 시나리오
-                  </button>
-                )}
-                {role && (
-                  <button type="button" className="ghost-btn" onClick={handleReset}>
-                    ❌ 시뮬레이션 종료
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {!displayRole && (
-              <p className="section-subtext">역할을 선택하면 새 메시지를 보낼 수 있어요.</p>
-            )}
-
-            {currentScenarioDetails}
-
-            <div className={simulationGridClass}>
-              <ChatWindow
-                activeRole={displayRole}
-                messages={messages}
-                onSend={handleSendMessage}
-                disabled={!manualStats || messagesLoading || !role}
-                loading={loadingResponse}
+              <ManualWorkspace
+                manualStats={manualStats}
+                uploading={uploading}
+                embedRatio={embedRatio}
+                onEmbedRatioChange={setEmbedRatio}
+                onUpload={handleManualUpload}
+                onRemoveSource={handleRemoveManualSource}
+                disabled={manualWorkspaceDisabled}
+                isGuestMode={isGuestMode}
+                onRequestAuth={isGuestMode ? handleRequestAuth : undefined}
               />
-              {showEvaluationPanel && <EvaluationPanel evaluation={evaluation} />}
-            </div>
-          </section>
-        )}
+            </section>
+          )}
+
+          {showSimulationPanel && (
+            <>
+              <div className="chat-toolbar">
+                <div>
+                  <strong>시뮬레이션 준비 완료</strong>
+                  <span>업로드한 자료를 바탕으로 고객/직원 역할을 전환하며 연습하세요.</span>
+                </div>
+                <div className="chat-toolbar__actions">
+                  <button type="button" className="ghost-btn" onClick={() => setManualEditorOpen(true)}>
+                    📚 자료 관리
+                  </button>
+                </div>
+              </div>
+              <section className="simulation-section">
+                <div className="section-header">
+                  <div className="section-title">
+                    {displayRole ? (
+                      <span className={`role-pill ${displayRole}`}>
+                        {displayRole === 'customer' ? '고객 모드' : '직원 모드'}
+                      </span>
+                    ) : (
+                      <span className="role-pill neutral">대화 기록</span>
+                    )}
+                    <button
+                      type="button"
+                      className={`role-toggle ${displayRole ?? 'neutral'}`}
+                      onClick={handleToggleRole}
+                      disabled={!manualStats || loadingResponse || !displayRole}
+                    >
+                      <span className={`toggle-icon ${displayRole === 'customer' ? 'flipped' : ''}`}>
+                        ↺
+                      </span>
+                      <span>
+                        {displayRole
+                          ? displayRole === 'customer'
+                            ? '직원 모드로 전환'
+                            : '고객 모드로 전환'
+                          : '역할 선택 필요'}
+                      </span>
+                    </button>
+                  </div>
+                  <div className="section-actions">
+                    {role === 'employee' && (
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        disabled={loadingResponse}
+                        onClick={() => startRole('employee')}
+                      >
+                        🔄 새 시나리오
+                      </button>
+                    )}
+                    {role && (
+                      <button type="button" className="ghost-btn" onClick={handleReset}>
+                        ❌ 시뮬레이션 종료
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {!displayRole && (
+                  <p className="section-subtext">역할을 선택하면 새 메시지를 보낼 수 있어요.</p>
+                )}
+
+                {currentScenarioDetails}
+
+                <div className={simulationGridClass}>
+                  <ChatWindow
+                    activeRole={displayRole}
+                    messages={messages}
+                    onSend={handleSendMessage}
+                    disabled={!manualStats || messagesLoading || !role}
+                    loading={loadingResponse}
+                  />
+                  {showEvaluationPanel && <EvaluationPanel evaluation={evaluation} />}
+                </div>
+              </section>
+            </>
+          )}
         </main>
       </div>
+      {showManualModal && (
+        <div
+          className="manual-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setManualEditorOpen(false)}
+        >
+          <div
+            className="manual-modal"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <div className="manual-modal__header">
+              <div>
+                <h3>자료 관리</h3>
+                <p>추가 업로드, 삭제 또는 프롬프트 수정을 진행하세요.</p>
+              </div>
+              <button type="button" className="ghost-btn" onClick={() => setManualEditorOpen(false)}>
+                닫기
+              </button>
+            </div>
+            <ManualWorkspace
+              manualStats={manualStats}
+              uploading={uploading}
+              embedRatio={embedRatio}
+              onEmbedRatioChange={setEmbedRatio}
+              onUpload={handleManualUpload}
+              onRemoveSource={handleRemoveManualSource}
+              disabled={manualWorkspaceDisabled}
+              isGuestMode={isGuestMode}
+              onRequestAuth={isGuestMode ? handleRequestAuth : undefined}
+            />
+          </div>
+        </div>
+      )}
     </>
   );
 }

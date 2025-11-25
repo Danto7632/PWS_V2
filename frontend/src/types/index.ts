@@ -8,16 +8,26 @@ export interface ProviderConfig {
   apiKey?: string;
 }
 
+export interface ManualSourceSummary {
+  id: string;
+  type: 'file' | 'instruction';
+  label: string;
+  createdAt: string;
+  preview?: string;
+}
+
 export interface ManualStats {
   fileCount: number;
   chunkCount: number;
   embeddedChunks: number;
   updatedAt?: string;
+  embedRatio: number;
+  sources: ManualSourceSummary[];
 }
 
-export interface ManualStatusResponse {
+export interface ManualStatusResponse<TStats = ManualStats> {
   hasManual: boolean;
-  stats?: ManualStats;
+  stats?: TStats;
 }
 
 export interface Scenario {
