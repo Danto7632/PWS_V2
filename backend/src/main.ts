@@ -20,6 +20,7 @@ async function bootstrap() {
     .setTitle('실전형 업무 시뮬레이터 API')
     .setDescription('업무 매뉴얼 업로드와 시뮬레이션 진행을 위한 REST API 명세')
     .setVersion('1.0.0')
+    .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' })
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document, {

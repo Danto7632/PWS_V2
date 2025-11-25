@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
-import { ManualsController } from './manuals.controller';
+import { GuestManualsController } from './guest-manuals.controller';
 import { ManualsService } from './manuals.service';
-
 @Module({
-  controllers: [ManualsController],
+  imports: [],
+  controllers: [GuestManualsController],
   providers: [ManualsService],
   exports: [ManualsService],
 })

@@ -8,10 +8,26 @@ export interface ProviderConfig {
   apiKey?: string;
 }
 
+export interface ManualSourceSummary {
+  id: string;
+  type: 'file' | 'instruction';
+  label: string;
+  createdAt: string;
+  preview?: string;
+}
+
 export interface ManualStats {
   fileCount: number;
   chunkCount: number;
   embeddedChunks: number;
+  updatedAt?: string;
+  embedRatio: number;
+  sources: ManualSourceSummary[];
+}
+
+export interface ManualStatusResponse<TStats = ManualStats> {
+  hasManual: boolean;
+  stats?: TStats;
 }
 
 export interface Scenario {
@@ -28,7 +44,6 @@ export interface Evaluation {
 
 export interface ChatMessage {
   id: string;
-  author: 'user' | 'assistant';
   role: Role | 'system';
   text: string;
   timestamp: string;
@@ -45,4 +60,34 @@ export interface OllamaStatus {
   connected: boolean;
   models?: string[];
   error?: string;
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  displayName: string;
+}
+
+export interface AuthResponse {
+  user: AuthUser;
+  token: string;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  instruction_text?: string | null;
+}
+
+export interface ConversationMessage {
+  id: string;
+  conversation_id: string;
+  role: Role | 'system';
+  content: string;
+  created_at: string;
 }

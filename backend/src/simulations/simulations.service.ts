@@ -4,6 +4,8 @@ import { VectorStoreService } from '../vector-store/vector-store.service';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { LlmService } from '../llm/llm.service';
 import { ProviderConfigDto } from '../common/dto/provider-config.dto';
+import { AuthUser } from '../auth/auth.types';
+import { ConversationsService } from '../conversations/conversations.service';
 
 export interface Scenario {
   situation: string;
@@ -18,12 +20,17 @@ export class SimulationsService {
     private readonly vectorStore: VectorStoreService,
     private readonly embeddingsService: EmbeddingsService,
     private readonly llmService: LlmService,
+    private readonly conversationsService: ConversationsService,
   ) {}
 
   async generateScenario(
     conversationId: string,
     providerConfig: ProviderConfigDto,
+    user?: AuthUser | null,
   ): Promise<Scenario> {
+    if (user) {
+      this.conversationsService.getConversationOrThrow(conversationId, user.id);
+    }
     const manual = await this.manualsService.getManualOrThrow(conversationId);
     const prompt = `당신은 아래 매뉴얼에 나오는 서비스/업무의 고객 또는 사용자입니다.
 
@@ -38,16 +45,35 @@ ${manual.manualText.slice(0, 1500)}
 고객 첫 말: (직원에게 처음 건네는 한 문장)`;
 
     const response = await this.llmService.call(prompt, providerConfig);
-    return parseScenario(response);
+    const scenario = parseScenario(response);
+    if (scenario.firstMessage && user) {
+      this.conversationsService.appendMessage(
+        conversationId,
+        'customer',
+        scenario.firstMessage,
+        user.id,
+      );
+    }
+    return scenario;
   }
 
   async customerRespond(
     conversationId: string,
     message: string,
     providerConfig: ProviderConfigDto,
+    user?: AuthUser | null,
   ) {
+    if (user) {
+      this.conversationsService.getConversationOrThrow(conversationId, user.id);
+      this.conversationsService.appendMessage(
+        conversationId,
+        'customer',
+        message,
+        user.id,
+      );
+    }
     const manual = await this.manualsService.getManualOrThrow(conversationId);
-    const context = await this.buildContext(conversationId, message);
+    const context = await this.buildContext(manual.ownerId, message);
     const contextText = context.join('\n');
     const prompt = `다음 업무 매뉴얼을 참고하여 고객 문의에 전문적이고 친절하게 응답해주세요:
 
@@ -58,9 +84,18 @@ ${contextText || manual.manualText.slice(0, 1200)}
 
 친절하고 정확한 직원 응답 (100자 이내):`;
 
-    const aiResponse = await this.llmService.call(prompt, providerConfig);
+    const aiResponse = (
+      await this.llmService.call(prompt, providerConfig)
+    ).trim();
+    if (user) {
+      this.conversationsService.appendMessage(
+        conversationId,
+        'employee',
+        aiResponse,
+      );
+    }
     return {
-      aiResponse: aiResponse.trim(),
+      aiResponse,
       context,
     };
   }
@@ -69,9 +104,19 @@ ${contextText || manual.manualText.slice(0, 1200)}
     conversationId: string,
     message: string,
     providerConfig: ProviderConfigDto,
+    user?: AuthUser | null,
   ) {
+    if (user) {
+      this.conversationsService.getConversationOrThrow(conversationId, user.id);
+      this.conversationsService.appendMessage(
+        conversationId,
+        'employee',
+        message,
+        user.id,
+      );
+    }
     const manual = await this.manualsService.getManualOrThrow(conversationId);
-    const context = await this.buildContext(conversationId, message);
+    const context = await this.buildContext(manual.ownerId, message);
     const contextText = context.join('\n');
     const prompt = `다음 업무 매뉴얼을 기준으로 직원의 고객 응답을 평가해주세요:
 
@@ -98,6 +143,7 @@ ${contextText || manual.manualText.slice(0, 1200)}
     const nextScenario = await this.generateScenario(
       conversationId,
       providerConfig,
+      user,
     );
 
     return {
@@ -113,18 +159,14 @@ ${contextText || manual.manualText.slice(0, 1200)}
   }
 
   private async buildContext(
-    conversationId: string,
+    ownerId: string,
     query: string,
   ): Promise<string[]> {
     const embedding = await this.embeddingsService.embed(query);
     if (!embedding.length) {
       return [];
     }
-    const docs = this.vectorStore.queryByEmbedding(
-      conversationId,
-      embedding,
-      3,
-    );
+    const docs = this.vectorStore.queryByEmbedding(ownerId, embedding, 3);
     return docs.map((doc) => doc.content);
   }
 }
