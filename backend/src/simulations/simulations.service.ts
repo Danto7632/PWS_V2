@@ -73,7 +73,7 @@ ${manual.manualText.slice(0, 1500)}
       );
     }
     const manual = await this.manualsService.getManualOrThrow(conversationId);
-    const context = await this.buildContext(conversationId, message);
+    const context = await this.buildContext(manual.ownerId, message);
     const contextText = context.join('\n');
     const prompt = `다음 업무 매뉴얼을 참고하여 고객 문의에 전문적이고 친절하게 응답해주세요:
 
@@ -116,7 +116,7 @@ ${contextText || manual.manualText.slice(0, 1200)}
       );
     }
     const manual = await this.manualsService.getManualOrThrow(conversationId);
-    const context = await this.buildContext(conversationId, message);
+    const context = await this.buildContext(manual.ownerId, message);
     const contextText = context.join('\n');
     const prompt = `다음 업무 매뉴얼을 기준으로 직원의 고객 응답을 평가해주세요:
 
@@ -159,18 +159,14 @@ ${contextText || manual.manualText.slice(0, 1200)}
   }
 
   private async buildContext(
-    conversationId: string,
+    ownerId: string,
     query: string,
   ): Promise<string[]> {
     const embedding = await this.embeddingsService.embed(query);
     if (!embedding.length) {
       return [];
     }
-    const docs = this.vectorStore.queryByEmbedding(
-      conversationId,
-      embedding,
-      3,
-    );
+    const docs = this.vectorStore.queryByEmbedding(ownerId, embedding, 3);
     return docs.map((doc) => doc.content);
   }
 }

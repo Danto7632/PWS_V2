@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -13,8 +14,22 @@ import { promises as fs } from 'fs';
 import * as XLSX from 'xlsx';
 import { DatabaseService } from '../database/database.service';
 import { AuthUser } from '../auth/auth.types';
-import { ConversationsService } from '../conversations/conversations.service';
 import { randomUUID } from 'node:crypto';
+
+type ManualOwnerType = 'project' | 'conversation' | 'guest';
+
+type ManualIngestPayload = {
+  embedRatio: number;
+  instructionText?: string;
+  mode?: 'append' | 'replace';
+};
+
+type ConversationOwnerRow = {
+  id: string;
+  user_id: string;
+  project_id?: string | null;
+  project_owner_id?: string | null;
+};
 
 export type ManualSourceType = 'file' | 'instruction';
 
@@ -38,6 +53,8 @@ export interface ManualCacheRecord {
   updatedAt: string;
   embedRatio: number;
   sources: ManualSource[];
+  ownerId: string;
+  ownerType: ManualOwnerType;
 }
 
 export interface ManualSummarySource {
@@ -93,7 +110,6 @@ export class ManualsService implements OnModuleInit {
     private readonly embeddingsService: EmbeddingsService,
     private readonly vectorStore: VectorStoreService,
     private readonly db: DatabaseService,
-    private readonly conversationsService: ConversationsService,
   ) {}
 
   async onModuleInit() {
@@ -109,12 +125,115 @@ export class ManualsService implements OnModuleInit {
     if (!conversationId) {
       throw new BadRequestException('conversationId is required.');
     }
-    if (user) {
-      this.conversationsService.getConversationOrThrow(conversationId, user.id);
+    const owner = this.resolveOwnerFromConversation(conversationId, user);
+    return this.ingestInternal(owner.ownerId, owner.ownerType, files, dto);
+  }
+
+  async ingestForProject(
+    projectId: string,
+    files: Express.Multer.File[] = [],
+    dto: ManualIngestPayload,
+  ): Promise<ManualSummary> {
+    if (!projectId?.trim()) {
+      throw new BadRequestException('projectId is required.');
     }
+    return this.ingestInternal(projectId, 'project', files, dto);
+  }
+
+  async getManualOrThrow(conversationId: string): Promise<ManualCacheRecord> {
+    const owner = this.resolveOwnerFromConversation(conversationId);
+    const record = await this.readManualFile(owner.ownerId, owner.ownerType);
+    if (!record) {
+      throw new NotFoundException('No manuals found for this conversation.');
+    }
+    return record;
+  }
+
+  async hasManual(conversationId: string) {
+    const owner = this.resolveOwnerFromConversation(conversationId);
+    const manual = await this.readManualFile(owner.ownerId, owner.ownerType);
+    return Boolean(manual?.manualText.trim());
+  }
+
+  async getManualStatusForUser(
+    conversationId: string,
+    user: AuthUser,
+  ): Promise<ManualStatusPayload> {
+    const owner = this.resolveOwnerFromConversation(conversationId, user);
+    const record = await this.readManualFile(owner.ownerId, owner.ownerType);
+    if (!record) {
+      return { hasManual: false };
+    }
+    return {
+      hasManual: true,
+      stats: this.toSummary(record),
+    };
+  }
+
+  async getManualStatus(
+    ownerId: string,
+    ownerType: ManualOwnerType = 'project',
+  ): Promise<ManualStatusPayload> {
+    const record = await this.readManualFile(ownerId, ownerType);
+    if (!record) {
+      return { hasManual: false };
+    }
+    return {
+      hasManual: true,
+      stats: this.toSummary(record),
+    };
+  }
+
+  async removeSource(
+    ownerId: string,
+    sourceId: string,
+    ownerType: ManualOwnerType = 'project',
+  ): Promise<ManualStatusPayload> {
+    if (!ownerId?.trim()) {
+      throw new BadRequestException('ownerId is required.');
+    }
+    if (!sourceId?.trim()) {
+      throw new BadRequestException('sourceId is required.');
+    }
+    const record = await this.readManualFile(ownerId, ownerType);
+    if (!record) {
+      throw new NotFoundException('삭제할 자료가 없습니다.');
+    }
+    const remainingSources = record.sources.filter(
+      (source) => source.id !== sourceId,
+    );
+    if (remainingSources.length === record.sources.length) {
+      throw new NotFoundException('요청한 자료를 찾을 수 없습니다.');
+    }
+    if (!remainingSources.length) {
+      await this.deleteManual(ownerId);
+      return { hasManual: false };
+    }
+    const stats = await this.rebuildFromSources(
+      ownerId,
+      ownerType,
+      remainingSources,
+      record.embedRatio,
+    );
+    return {
+      hasManual: true,
+      stats,
+    };
+  }
+
+  async deleteManualData(ownerId: string) {
+    await this.deleteManual(ownerId);
+  }
+
+  private async ingestInternal(
+    ownerId: string,
+    ownerType: ManualOwnerType,
+    files: Express.Multer.File[] = [],
+    dto: ManualIngestPayload,
+  ): Promise<ManualSummary> {
     const mode = dto.mode === 'replace' ? 'replace' : 'append';
     const existingRecord =
-      mode === 'append' ? await this.readManualFile(conversationId) : null;
+      mode === 'append' ? await this.readManualFile(ownerId, ownerType) : null;
     const existingSources =
       mode === 'append' && existingRecord ? existingRecord.sources : [];
     const uploadedSources = await this.createSourcesFromPayload(
@@ -131,7 +250,8 @@ export class ManualsService implements OnModuleInit {
     }
 
     const summary = await this.rebuildFromSources(
-      conversationId,
+      ownerId,
+      ownerType,
       mergedSources,
       dto.embedRatio,
     );
@@ -139,153 +259,70 @@ export class ManualsService implements OnModuleInit {
     return summary;
   }
 
-  async getManualOrThrow(conversationId: string): Promise<ManualCacheRecord> {
-    const record = await this.readManualFile(conversationId);
-    if (!record) {
-      throw new NotFoundException('No manuals found for this conversation.');
-    }
-    return record;
-  }
-
-  async hasManual(conversationId: string) {
-    const manual = await this.readManualFile(conversationId);
-    return Boolean(manual?.manualText.trim());
-  }
-
-  async getManualStatusForUser(
-    conversationId: string,
-    user: AuthUser,
-  ): Promise<ManualStatusPayload> {
-    this.conversationsService.getConversationOrThrow(conversationId, user.id);
-    const record = await this.readManualFile(conversationId);
-    if (!record) {
-      return { hasManual: false };
-    }
-    return {
-      hasManual: true,
-      stats: this.toSummary(record),
-    };
-  }
-
-  async getManualStatus(conversationId: string): Promise<ManualStatusPayload> {
-    const record = await this.readManualFile(conversationId);
-    if (!record) {
-      return { hasManual: false };
-    }
-    return {
-      hasManual: true,
-      stats: this.toSummary(record),
-    };
-  }
-
-  async removeSource(
-    conversationId: string,
-    sourceId: string,
-    user?: AuthUser | null,
-  ): Promise<ManualStatusPayload> {
-    if (!conversationId?.trim()) {
-      throw new BadRequestException('conversationId is required.');
-    }
-    if (!sourceId?.trim()) {
-      throw new BadRequestException('sourceId is required.');
-    }
-    if (user) {
-      this.conversationsService.getConversationOrThrow(conversationId, user.id);
-    }
-    const record = await this.readManualFile(conversationId);
-    if (!record) {
-      throw new NotFoundException('삭제할 자료가 없습니다.');
-    }
-    const remainingSources = record.sources.filter(
-      (source) => source.id !== sourceId,
-    );
-    if (remainingSources.length === record.sources.length) {
-      throw new NotFoundException('요청한 자료를 찾을 수 없습니다.');
-    }
-    if (!remainingSources.length) {
-      await this.deleteManual(conversationId);
-      return { hasManual: false };
-    }
-    const stats = await this.rebuildFromSources(
-      conversationId,
-      remainingSources,
-      record.embedRatio,
-    );
-    return {
-      hasManual: true,
-      stats,
-    };
-  }
-
-  private async persistManual(
-    conversationId: string,
-    payload: ManualCacheRecord,
-  ) {
-    const target = path.join(this.manualDir, `${conversationId}.json`);
+  private async persistManual(ownerId: string, payload: ManualCacheRecord) {
+    const target = path.join(this.manualDir, `${ownerId}.json`);
     await fs.writeFile(target, JSON.stringify(payload, null, 2), 'utf8');
   }
 
   private async persistMetadata(
-    conversationId: string,
+    ownerId: string,
+    ownerType: ManualOwnerType,
     record: ManualCacheRecord,
   ) {
     const timestamp = record.updatedAt;
     try {
-      const conversationExists = this.db.get<{ id: string }>(
-        'SELECT id FROM conversations WHERE id = ? LIMIT 1',
-        [conversationId],
+      this.db.run(
+        `INSERT INTO manuals (owner_id, owner_type, file_count, chunk_count, embedded_chunks, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(owner_id) DO UPDATE SET
+           owner_type = excluded.owner_type,
+           file_count = excluded.file_count,
+           chunk_count = excluded.chunk_count,
+           embedded_chunks = excluded.embedded_chunks,
+           updated_at = excluded.updated_at`,
+        [
+          ownerId,
+          ownerType,
+          record.fileCount,
+          record.chunkCount,
+          record.embeddedChunks,
+          timestamp,
+        ],
       );
-      if (conversationExists) {
-        this.db.run(
-          `INSERT INTO manuals (conversation_id, file_count, chunk_count, embedded_chunks, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(conversation_id) DO UPDATE SET
-             file_count = excluded.file_count,
-             chunk_count = excluded.chunk_count,
-             embedded_chunks = excluded.embedded_chunks,
-             updated_at = excluded.updated_at`,
-          [
-            conversationId,
-            record.fileCount,
-            record.chunkCount,
-            record.embeddedChunks,
-            timestamp,
-          ],
-        );
-      }
     } catch (error) {
       this.logger.warn('Failed to upsert manual metadata', error as Error);
     }
   }
 
-  private async deleteManual(conversationId: string) {
-    const target = path.join(this.manualDir, `${conversationId}.json`);
+  private async deleteManual(ownerId: string) {
+    const target = path.join(this.manualDir, `${ownerId}.json`);
     try {
       await fs.unlink(target);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        this.logger.warn(`Failed to delete manual file for ${conversationId}`);
+        this.logger.warn(`Failed to delete manual file for ${ownerId}`);
       }
     }
-    await this.vectorStore.clearDocuments(conversationId);
+    await this.vectorStore.clearDocuments(ownerId);
     try {
-      this.db.run('DELETE FROM manuals WHERE conversation_id = ?', [conversationId]);
+      this.db.run('DELETE FROM manuals WHERE owner_id = ?', [ownerId]);
     } catch (error) {
       this.logger.warn('Failed to delete manual metadata', error as Error);
     }
   }
 
   private async readManualFile(
-    conversationId: string,
+    ownerId: string,
+    ownerType: ManualOwnerType,
   ): Promise<ManualCacheRecord | null> {
-    const target = path.join(this.manualDir, `${conversationId}.json`);
+    const target = path.join(this.manualDir, `${ownerId}.json`);
     try {
       const raw = await fs.readFile(target, 'utf8');
       const parsed = JSON.parse(raw) as Partial<ManualCacheRecord>;
-      return this.normalizeRecord(parsed);
+      return this.normalizeRecord(parsed, ownerId, ownerType);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        this.logger.warn(`Failed to load manual for ${conversationId}`);
+        this.logger.warn(`Failed to load manual for ${ownerId}`);
       }
       return null;
     }
@@ -293,6 +330,8 @@ export class ManualsService implements OnModuleInit {
 
   private normalizeRecord(
     raw: Partial<ManualCacheRecord> | null,
+    ownerId: string,
+    defaultOwnerType: ManualOwnerType,
   ): ManualCacheRecord | null {
     if (!raw || !raw.manualText?.trim()) {
       return null;
@@ -317,6 +356,8 @@ export class ManualsService implements OnModuleInit {
       updatedAt: raw.updatedAt ?? new Date().toISOString(),
       embedRatio,
       sources,
+      ownerId,
+      ownerType: raw.ownerType ?? defaultOwnerType,
     };
   }
 
@@ -448,7 +489,8 @@ export class ManualsService implements OnModuleInit {
   }
 
   private async rebuildFromSources(
-    conversationId: string,
+    ownerId: string,
+    ownerType: ManualOwnerType,
     sources: ManualSource[],
     embedRatioInput?: number,
   ): Promise<ManualSummary> {
@@ -474,11 +516,7 @@ export class ManualsService implements OnModuleInit {
       targetChunks.map((chunk) => this.embeddingsService.embed(chunk)),
     );
 
-    await this.vectorStore.replaceDocuments(
-      conversationId,
-      targetChunks,
-      embeddings,
-    );
+    await this.vectorStore.replaceDocuments(ownerId, targetChunks, embeddings);
 
     const timestamp = new Date().toISOString();
     const record: ManualCacheRecord = {
@@ -489,12 +527,46 @@ export class ManualsService implements OnModuleInit {
       updatedAt: timestamp,
       embedRatio,
       sources,
+      ownerId,
+      ownerType,
     };
 
-    await this.persistManual(conversationId, record);
-    await this.persistMetadata(conversationId, record);
+    await this.persistManual(ownerId, record);
+    await this.persistMetadata(ownerId, ownerType, record);
 
     return this.toSummary(record);
+  }
+
+  private resolveOwnerFromConversation(
+    conversationId: string,
+    user?: AuthUser | null,
+  ): { ownerId: string; ownerType: ManualOwnerType } {
+    const row = this.db.get<ConversationOwnerRow>(
+      `SELECT c.id, c.user_id, c.project_id, p.user_id as project_owner_id
+       FROM conversations c
+       LEFT JOIN projects p ON c.project_id = p.id
+       WHERE c.id = ?
+       LIMIT 1`,
+      [conversationId],
+    );
+
+    if (!row) {
+      if (user) {
+        throw new NotFoundException('대화를 찾을 수 없습니다.');
+      }
+      return { ownerId: conversationId, ownerType: 'guest' };
+    }
+
+    const ownerUserId = row.project_owner_id ?? row.user_id;
+    if (user && ownerUserId && ownerUserId !== user.id) {
+      throw new ForbiddenException('대화에 접근할 수 없습니다.');
+    }
+
+    if (row.project_id) {
+      return { ownerId: row.project_id, ownerType: 'project' };
+    }
+
+    return { ownerId: conversationId, ownerType: 'conversation' };
   }
 
   private async extractText(file: Express.Multer.File): Promise<string> {

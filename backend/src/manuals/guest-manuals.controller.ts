@@ -69,7 +69,7 @@ export class GuestManualsController {
     @Param('conversationId') conversationId: string,
   ): Promise<ManualStatusResponseDto> {
     const status: ManualStatusPayload =
-      await this.manualsService.getManualStatus(conversationId);
+      await this.manualsService.getManualStatus(conversationId, 'guest');
     return {
       hasManual: status.hasManual,
       stats: status.stats,
@@ -86,6 +86,7 @@ export class GuestManualsController {
     const status = await this.manualsService.removeSource(
       conversationId,
       sourceId,
+      'guest',
     );
     return {
       hasManual: status.hasManual,

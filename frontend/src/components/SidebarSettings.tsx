@@ -17,6 +17,9 @@ type Props = {
   onToggleSidebar: () => void;
 };
 
+import { Button } from './ui/button';
+import { Separator } from './ui/separator';
+import { Edit3, Trash2 } from 'lucide-react';
 export function SidebarSettings({
   conversations,
   activeConversationId,
@@ -88,9 +91,9 @@ export function SidebarSettings({
       return (
         <div className="guest-conversation-placeholder">
           <p>게스트 모드는 하나의 임시 대화만 제공합니다.</p>
-          <button type="button" className="ghost-btn" onClick={() => onRequestAuth?.()}>
+          <Button type="button" variant="outline" onClick={() => onRequestAuth?.()}>
             🔐 로그인하고 저장하기
-          </button>
+          </Button>
         </div>
       );
     }
@@ -132,28 +135,32 @@ export function SidebarSettings({
                   </span>
                 </div>
                 <div className="conversation-actions">
-                  <button
+                  <Button
                     type="button"
-                    className="text-btn"
+                    variant="ghost"
+                    size="icon"
                     onClick={(event) => {
                       event.stopPropagation();
                       handleRenameConversation(conversation.id, conversation.title);
                     }}
                     disabled={conversationActionLoading}
                   >
-                    ✏️
-                  </button>
-                  <button
+                    <Edit3 className="h-4 w-4" />
+                    <span className="sr-only">대화 제목 편집</span>
+                  </Button>
+                  <Button
                     type="button"
-                    className="text-btn"
+                    variant="ghost"
+                    size="icon"
                     onClick={(event) => {
                       event.stopPropagation();
                       handleDeleteConversation(conversation.id, conversation.title);
                     }}
                     disabled={conversationActionLoading}
                   >
-                    🗑️
-                  </button>
+                    <Trash2 className="h-4 w-4" />
+                    <span className="sr-only">대화 삭제</span>
+                  </Button>
                 </div>
               </div>
             ))
@@ -191,17 +198,20 @@ export function SidebarSettings({
           <p className="sidebar-label">대화 기록</p>
         </div>
         {!isGuestMode && (
-          <button
+          <Button
             type="button"
-            className="new-chat-btn"
+            variant="outline"
+            size="sm"
+            className="rounded-full font-semibold"
             onClick={handleCreateConversation}
             disabled={conversationLoading || conversationActionLoading}
           >
             + 새 채팅
-          </button>
+          </Button>
         )}
       </div>
       {renderConversationSection()}
+      <Separator className="my-4" />
       <footer className="sidebar-footer">
         <div className="sidebar-user">
           <div className="sidebar-avatar">
@@ -213,9 +223,14 @@ export function SidebarSettings({
           </div>
         </div>
         <div className="sidebar-footer-actions">
-          <button type="button" className="link-btn" onClick={() => onRequestAuth?.()}>
+          <Button
+            type="button"
+            variant="link"
+            className="px-0"
+            onClick={() => onRequestAuth?.()}
+          >
             계정 관리
-          </button>
+          </Button>
         </div>
       </footer>
     </aside>

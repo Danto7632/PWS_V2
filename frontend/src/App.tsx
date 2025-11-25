@@ -32,6 +32,19 @@ import { ManualWorkspace } from './components/ManualWorkspace';
 import { useAuth } from './context/AuthContext';
 import { normalizeManualStats } from './utils/manuals';
 import { ChatLogo } from './components/ChatLogo';
+import { Button } from './components/ui/button';
+import { Badge } from './components/ui/badge';
+import { Card } from './components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from './components/ui/dropdown-menu';
+import { Input } from './components/ui/input';
+import { Alert, AlertDescription, AlertTitle } from './components/ui/alert';
+import { BookMarked, Check, ChevronDown, Edit3, Search, TriangleAlert, UserRound } from 'lucide-react';
 
 const DEFAULT_PROVIDER: ProviderConfig = {
   provider: 'ollama',
@@ -124,7 +137,6 @@ function App() {
   );
   const typingTimers = useRef<Map<string, number>>(new Map());
   const roleInitRef = useRef(false);
-  const modelSwitcherRef = useRef<HTMLDivElement | null>(null);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [loadingResponse, setLoadingResponse] = useState(false);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
@@ -147,7 +159,6 @@ function App() {
     : null;
   const manualStatusSessionRef = useRef<string | null>(sessionConversationId);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [manualEditorOpen, setManualEditorOpen] = useState(false);
   const ollamaModels = useMemo(() => {
     if (ollamaStatus?.connected && ollamaStatus.models?.length) {
@@ -200,22 +211,6 @@ function App() {
       .catch(() => setOllamaStatus({ connected: false, error: '연결 실패' }));
   }, []);
 
-  useEffect(() => {
-    if (!modelMenuOpen) {
-      return;
-    }
-    const handleClickOutside = (event: MouseEvent) => {
-      if (!modelSwitcherRef.current) return;
-      if (modelSwitcherRef.current.contains(event.target as Node)) {
-        return;
-      }
-      setModelMenuOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [modelMenuOpen]);
 
   useEffect(() => {
     if (!isGuestMode) {
@@ -237,27 +232,28 @@ function App() {
     setShowAuthPanel(false);
   }, []);
 
-  const handleProviderChange = useCallback(
-    (event: ChangeEvent<HTMLSelectElement>) => {
-      const provider = event.target.value as ProviderConfig['provider'];
+  const changeProvider = useCallback(
+    (provider: ProviderConfig['provider']) => {
       const nextModels = (() => {
         if (provider === 'openai') return OPENAI_MODELS;
         if (provider === 'gemini') return GEMINI_MODELS;
-        return ollamaModels;
+        return ollamaModels.length ? ollamaModels : OLLAMA_DEFAULT_MODELS;
       })();
-      setProviderConfig((prev) => ({
-        ...prev,
-        provider,
-        model: nextModels[0],
-        apiKey: provider === 'ollama' ? undefined : prev.apiKey,
-      }));
+      setProviderConfig((prev) => {
+        const fallbackModel = nextModels.includes(prev.model) ? prev.model : nextModels[0];
+        return {
+          ...prev,
+          provider,
+          model: fallbackModel,
+          apiKey: provider === 'ollama' ? undefined : prev.apiKey,
+        };
+      });
     },
     [ollamaModels],
   );
 
-  const handleModelChange = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
-    const value = event.target.value;
-    setProviderConfig((prev) => ({ ...prev, model: value }));
+  const changeModel = useCallback((model: string) => {
+    setProviderConfig((prev) => ({ ...prev, model }));
   }, []);
 
   const handleApiKeyChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
@@ -738,6 +734,17 @@ function App() {
     void startRole(nextRole);
   };
 
+  const handleQuickRoleSelect = useCallback(
+    (selected: Role) => {
+      if (!manualStats || loadingResponse) return;
+      if (displayRole === selected && role === selected) {
+        return;
+      }
+      void startRole(selected);
+    },
+    [displayRole, loadingResponse, manualStats, role, startRole],
+  );
+
   const manualWorkspaceDisabled = !sessionConversationId || conversationLoading;
   const hasManualData = Boolean(manualStats);
   const showManualInline = !hasManualData;
@@ -762,6 +769,47 @@ function App() {
       </div>
     );
   }, [role, scenario]);
+
+  const collapsedActions = useMemo(
+    () => [
+      {
+        key: 'new',
+        icon: <Edit3 className="h-5 w-5" />,
+        label: '새 채팅',
+        onClick: handleCollapsedNewChat,
+        disabled: false,
+      },
+      {
+        key: 'search',
+        icon: <Search className="h-5 w-5" />,
+        label: '채팅 목록 보기',
+        onClick: handleCollapsedSearch,
+        disabled: false,
+      },
+      {
+        key: 'library',
+        icon: <BookMarked className="h-5 w-5" />,
+        label: manualStats ? '자료 관리' : '자료 업로드 필요',
+        onClick: handleCollapsedManual,
+        disabled: !manualStats,
+      },
+      {
+        key: 'account',
+        icon: <UserRound className="h-5 w-5" />,
+        label: isGuestMode ? '로그인 / 회원가입' : '계정 설정',
+        onClick: handleCollapsedAuth,
+        disabled: false,
+      },
+    ],
+    [
+      handleCollapsedAuth,
+      handleCollapsedManual,
+      handleCollapsedNewChat,
+      handleCollapsedSearch,
+      isGuestMode,
+      manualStats,
+    ],
+  );
 
   return (
     <>
@@ -823,36 +871,7 @@ function App() {
                   <span>사이드바 열기</span>
                 </button>
               </div>
-              {[
-                {
-                  key: 'new',
-                  icon: '+',
-                  label: '새 채팅',
-                  onClick: handleCollapsedNewChat,
-                  disabled: false,
-                },
-                {
-                  key: 'search',
-                  icon: '🔍',
-                  label: '채팅 목록 보기',
-                  onClick: handleCollapsedSearch,
-                  disabled: false,
-                },
-                {
-                  key: 'library',
-                  icon: '📚',
-                  label: manualStats ? '자료 관리' : '자료 업로드 필요',
-                  onClick: handleCollapsedManual,
-                  disabled: !manualStats,
-                },
-                {
-                  key: 'account',
-                  icon: isGuestMode ? '🔐' : '👤',
-                  label: isGuestMode ? '로그인 / 회원가입' : '계정 설정',
-                  onClick: handleCollapsedAuth,
-                  disabled: false,
-                },
-              ].map((action) => (
+              {collapsedActions.map((action) => (
                 <button
                   key={action.key}
                   type="button"
@@ -862,7 +881,9 @@ function App() {
                   title={action.label}
                   aria-label={action.label}
                 >
-                  <span aria-hidden="true">{action.icon}</span>
+                  <span aria-hidden="true" className="mini-sidebar__icon">
+                    {action.icon}
+                  </span>
                   <span className="sr-only">{action.label}</span>
                 </button>
               ))}
@@ -870,80 +891,102 @@ function App() {
           )}
         </div>
         <main className="main-panel">
+          <div className="main-surface">
           <header className="main-topbar">
-            <div className="topbar-left">
-              <button
-                type="button"
-                className={`sidebar-toggle ${sidebarOpen ? 'open' : 'closed'}`}
-                onClick={() => setSidebarOpen((prev) => !prev)}
-                aria-label={sidebarOpen ? '사이드바 닫기' : '사이드바 열기'}
-                title={sidebarOpen ? '사이드바 닫기' : '사이드바 열기'}
-              >
-                <span className="sidebar-toggle-icon" aria-hidden="true">
-                  <span />
-                  <span />
-                </span>
-                <span className="sr-only">
-                  {sidebarOpen ? '사이드바 닫기' : '사이드바 열기'}
-                </span>
-              </button>
-              <div className="model-switcher-wrapper" ref={modelSwitcherRef}>
-                <button
-                  type="button"
-                  className="model-switcher"
-                  onClick={() => setModelMenuOpen((prev) => !prev)}
-                  aria-haspopup="true"
-                  aria-expanded={modelMenuOpen}
-                >
-                  <span>{PROVIDER_LABELS[providerConfig.provider]}</span>
-                  <strong>{providerConfig.model}</strong>
-                </button>
-                {modelMenuOpen && (
-                  <div className="model-menu">
-                    <label>
-                      제공자
-                      <select value={providerConfig.provider} onChange={handleProviderChange}>
+            <div className="topbar-left gpt-topbar">
+              <div className="topbar-brand">
+                <ChatLogo className="chat-logo-icon" />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      className="topbar-model-btn gap-2"
+                      aria-label="모델 선택"
+                    >
+                      <span className="topbar-model-main">ChatGPT</span>
+                      <span className="topbar-model-sub">5.1 Thinking</span>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" sideOffset={12} className="model-dropdown">
+                    <div className="model-dropdown__section">
+                      <DropdownMenuLabel className="model-dropdown__label">플랫폼</DropdownMenuLabel>
+                      <div className="model-dropdown__list">
                         {Object.entries(PROVIDER_LABELS).map(([key, label]) => (
-                          <option key={key} value={key}>
-                            {label}
-                          </option>
+                          <DropdownMenuItem
+                            key={key}
+                            onSelect={(event) => {
+                              event.preventDefault();
+                              changeProvider(key as ProviderConfig['provider']);
+                            }}
+                            className={`model-option ${
+                              providerConfig.provider === key ? 'is-active' : ''
+                            }`}
+                          >
+                            <span>{label}</span>
+                            {providerConfig.provider === key && <Check className="h-4 w-4" />}
+                          </DropdownMenuItem>
                         ))}
-                      </select>
-                    </label>
-                    <label>
-                      모델
-                      <select value={providerConfig.model} onChange={handleModelChange}>
+                      </div>
+                    </div>
+                    <div className="model-dropdown__section">
+                      <DropdownMenuLabel className="model-dropdown__label">모델</DropdownMenuLabel>
+                      <div className="model-dropdown__scroll">
                         {providerModels.map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
+                          <DropdownMenuItem
+                            key={model}
+                            onSelect={() => changeModel(model)}
+                            className={`model-option ${
+                              providerConfig.model === model ? 'is-active' : ''
+                            }`}
+                          >
+                            <span>{model}</span>
+                            {providerConfig.model === model && <Check className="h-4 w-4" />}
+                          </DropdownMenuItem>
                         ))}
-                      </select>
-                    </label>
+                      </div>
+                    </div>
                     {providerConfig.provider !== 'ollama' && (
-                      <label>
-                        API Key
-                        <input
+                      <div
+                        className="model-dropdown__section model-dropdown__section--input"
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <label className="model-dropdown__label" htmlFor="provider-api-key">
+                          API Key
+                        </label>
+                        <Input
+                          id="provider-api-key"
                           type="password"
                           placeholder="필요 시 입력"
                           value={providerConfig.apiKey ?? ''}
                           onChange={handleApiKeyChange}
                         />
-                      </label>
+                      </div>
                     )}
-                  </div>
-                )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
             <div className="topbar-actions">
               {isGuestMode ? (
-                <button type="button" className="primary-outline-btn" onClick={handleRequestAuth}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-full px-5"
+                  onClick={handleRequestAuth}
+                >
                   🔐 로그인 / 회원가입
-                </button>
+                </Button>
               ) : (
-                <button type="button" className="ghost-btn" onClick={logout}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="rounded-full"
+                  onClick={logout}
+                >
                   🔓 로그아웃
-                </button>
+                </Button>
               )}
             </div>
           </header>
@@ -957,14 +1000,18 @@ function App() {
             </div>
           )}
 
-          {error && <div className="error-banner">{error}</div>}
+          {error && (
+            <Alert variant="destructive" className="error-alert">
+              <TriangleAlert className="h-5 w-5" />
+              <div>
+                <AlertTitle>Internal server error</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </div>
+            </Alert>
+          )}
 
           {showManualInline && (
-            <section className="manual-intro">
-              <div className="manual-intro__header">
-                <h1>대화용 매뉴얼 업로드 또는 프롬프트 입력</h1>
-                <p>좌측 대화를 선택하고 자료를 학습시키면 자동으로 채팅 모드가 열립니다.</p>
-              </div>
+            <section className="manual-intro" aria-label="매뉴얼 업로드">
               <ManualWorkspace
                 manualStats={manualStats}
                 uploading={uploading}
@@ -983,6 +1030,9 @@ function App() {
             <>
               <div className="chat-toolbar">
                 <div>
+                  <Badge variant="secondary" className="chat-toolbar__badge">
+                    시뮬레이션
+                  </Badge>
                   <strong>시뮬레이션 준비 완료</strong>
                   <span>업로드한 자료를 바탕으로 고객/직원 역할을 전환하며 연습하세요.</span>
                 </div>
@@ -992,33 +1042,26 @@ function App() {
                   </button>
                 </div>
               </div>
-              <section className="simulation-section">
+              <Card
+                className="simulation-section"
+                role="region"
+                aria-labelledby="simulation-section-title"
+              >
                 <div className="section-header">
                   <div className="section-title">
-                    {displayRole ? (
-                      <span className={`role-pill ${displayRole}`}>
-                        {displayRole === 'customer' ? '고객 모드' : '직원 모드'}
-                      </span>
-                    ) : (
-                      <span className="role-pill neutral">대화 기록</span>
-                    )}
-                    <button
-                      type="button"
-                      className={`role-toggle ${displayRole ?? 'neutral'}`}
-                      onClick={handleToggleRole}
-                      disabled={!manualStats || loadingResponse || !displayRole}
+                    <Badge
+                      variant="secondary"
+                      className={`role-badge ${displayRole ?? 'neutral'}`}
                     >
-                      <span className={`toggle-icon ${displayRole === 'customer' ? 'flipped' : ''}`}>
-                        ↺
-                      </span>
-                      <span>
-                        {displayRole
-                          ? displayRole === 'customer'
-                            ? '직원 모드로 전환'
-                            : '고객 모드로 전환'
-                          : '역할 선택 필요'}
-                      </span>
-                    </button>
+                      {displayRole
+                        ? displayRole === 'customer'
+                          ? '고객 모드'
+                          : '직원 모드'
+                        : '대화 기록'}
+                    </Badge>
+                    <p id="simulation-section-title" className="section-subtitle">
+                      업로드한 자료를 바탕으로 고객/직원 역할을 전환하며 연습하세요.
+                    </p>
                   </div>
                   <div className="section-actions">
                     {role === 'employee' && (
@@ -1039,6 +1082,36 @@ function App() {
                   </div>
                 </div>
 
+                <div className="role-switch" role="group" aria-label="역할 선택">
+                  <Button
+                    type="button"
+                    variant={displayRole === 'employee' ? 'default' : 'outline'}
+                    className={`role-switch-btn ${displayRole === 'employee' ? 'is-active' : ''}`}
+                    onClick={() => handleQuickRoleSelect('employee')}
+                    disabled={!manualStats || loadingResponse}
+                  >
+                    직원 모드
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={displayRole === 'customer' ? 'default' : 'outline'}
+                    className={`role-switch-btn ${displayRole === 'customer' ? 'is-active' : ''}`}
+                    onClick={() => handleQuickRoleSelect('customer')}
+                    disabled={!manualStats || loadingResponse}
+                  >
+                    {displayRole === 'customer' ? '고객 모드' : '고객 모드 전환'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="role-switch-btn subtle"
+                    onClick={handleToggleRole}
+                    disabled={!displayRole || loadingResponse}
+                  >
+                    ↺ 역할 전환
+                  </Button>
+                </div>
+
                 {!displayRole && (
                   <p className="section-subtext">역할을 선택하면 새 메시지를 보낼 수 있어요.</p>
                 )}
@@ -1055,9 +1128,10 @@ function App() {
                   />
                   {showEvaluationPanel && <EvaluationPanel evaluation={evaluation} />}
                 </div>
-              </section>
+              </Card>
             </>
           )}
+          </div>
         </main>
       </div>
       {showManualModal && (

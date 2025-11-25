@@ -51,13 +51,30 @@ export function ManualWorkspace({
     }
   }, [manualStats]);
 
+  const createFileKey = (file: File) => `${file.name}-${file.size}-${file.lastModified}`;
+
+  const appendFiles = (files: File[]) => {
+    if (!files.length) return;
+    setSelectedFiles((prev) => {
+      const existingKeys = new Set(prev.map(createFileKey));
+      const next = [...prev];
+      files.forEach((file) => {
+        const key = createFileKey(file);
+        if (existingKeys.has(key)) return;
+        existingKeys.add(key);
+        next.push(file);
+      });
+      return next;
+    });
+  };
+
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
-    if (!files) {
-      setSelectedFiles([]);
-      return;
+    if (!files) return;
+    appendFiles(Array.from(files));
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
-    setSelectedFiles(Array.from(files));
   };
 
   const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
@@ -65,11 +82,15 @@ export function ManualWorkspace({
     if (uploading || disabled) return;
     const files = Array.from(event.dataTransfer.files);
     if (!files.length) return;
-    setSelectedFiles(files);
+    appendFiles(files);
   };
 
   const openFilePicker = () => {
     fileInputRef.current?.click();
+  };
+
+  const handleRemoveSelectedFile = (fileKey: string) => {
+    setSelectedFiles((prev) => prev.filter((file) => createFileKey(file) !== fileKey));
   };
 
   const resetForm = () => {
@@ -159,9 +180,20 @@ export function ManualWorkspace({
           </label>
           {selectedFiles.length > 0 && (
             <ul className="selected-files">
-              {selectedFiles.map((file) => (
-                <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>
-              ))}
+              {selectedFiles.map((file) => {
+                const key = createFileKey(file);
+                return (
+                  <li key={key}>
+                    <div>
+                      <strong>{file.name}</strong>
+                      <span>{(file.size / (1024 * 1024)).toFixed(2)}MB</span>
+                    </div>
+                    <button type="button" onClick={() => handleRemoveSelectedFile(key)}>
+                      제거
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
           <label className="slider-label">
