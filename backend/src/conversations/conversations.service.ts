@@ -70,6 +70,28 @@ export class ConversationsService {
     );
   }
 
+  listUserConversations(userId: string) {
+    return this.db.all<ConversationRow>(
+      `SELECT c.id, c.user_id, c.project_id, c.title, c.role, c.created_at, c.updated_at
+       FROM conversations c
+       JOIN projects p ON c.project_id = p.id
+       WHERE p.user_id = ?
+       ORDER BY c.updated_at DESC`,
+      [userId],
+    );
+  }
+
+  async createUserConversation(userId: string, title?: string) {
+    const normalizedTitle = title?.trim() || DEFAULT_TITLE;
+    const project = this.projectsService.createProject(userId, {
+      name: normalizedTitle,
+    });
+    return this.createConversation(project.id, userId, {
+      title: normalizedTitle,
+      role: 'customer',
+    });
+  }
+
   getConversationOrThrow(
     conversationId: string,
     userId?: string,
@@ -163,6 +185,33 @@ export class ConversationsService {
       'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC',
       [conversationId],
     );
+  }
+
+  getMessagesForUser(conversationId: string, userId: string) {
+    this.getConversationOrThrow(conversationId, userId);
+    return this.db.all<MessageRow>(
+      'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC',
+      [conversationId],
+    );
+  }
+
+  renameConversationById(
+    conversationId: string,
+    userId: string,
+    title: string,
+  ) {
+    const conversation = this.getConversationOrThrow(conversationId, userId);
+    return this.renameConversation(
+      conversationId,
+      conversation.project_id,
+      userId,
+      title,
+    );
+  }
+
+  deleteConversationById(conversationId: string, userId: string) {
+    const conversation = this.getConversationOrThrow(conversationId, userId);
+    this.deleteConversation(conversationId, conversation.project_id, userId);
   }
 
   ensureChatBelongsToProject(

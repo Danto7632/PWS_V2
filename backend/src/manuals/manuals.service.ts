@@ -221,6 +221,15 @@ export class ManualsService implements OnModuleInit {
     };
   }
 
+  async removeSourceForConversation(
+    conversationId: string,
+    sourceId: string,
+    user?: AuthUser | null,
+  ): Promise<ManualStatusPayload> {
+    const owner = this.resolveOwnerFromConversation(conversationId, user);
+    return this.removeSource(owner.ownerId, sourceId, owner.ownerType);
+  }
+
   async deleteManualData(ownerId: string) {
     await this.deleteManual(ownerId);
   }

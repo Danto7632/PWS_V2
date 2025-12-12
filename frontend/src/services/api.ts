@@ -9,6 +9,8 @@ import type {
   ConversationMessage,
   ConversationSummary,
   ManualStatusResponse,
+  ProjectSummary,
+  Role,
 } from '../types';
 import { normalizeManualStats, type ManualStatsLike } from '../utils/manuals';
 
@@ -262,7 +264,143 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 }
 
 export function fetchConversationMessages(
+  projectId: string,
   conversationId: string,
 ): Promise<ConversationMessage[]> {
-  return request<ConversationMessage[]>(`/api/conversations/${conversationId}/messages`);
+  return request<ConversationMessage[]>(
+    `/api/projects/${projectId}/chats/${conversationId}/messages`,
+  );
+}
+
+export function fetchProjects(): Promise<ProjectSummary[]> {
+  return request<ProjectSummary[]>('/api/projects');
+}
+
+export function createProject(payload: {
+  name: string;
+  description?: string;
+  instruction_text?: string;
+}): Promise<ProjectSummary> {
+  return request<ProjectSummary>('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateProject(
+  projectId: string,
+  payload: {
+    name?: string;
+    description?: string | null;
+    instruction_text?: string | null;
+  },
+): Promise<ProjectSummary> {
+  return request<ProjectSummary>(`/api/projects/${projectId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  await request<{ success: boolean }>(`/api/projects/${projectId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function fetchProjectChats(
+  projectId: string,
+): Promise<ConversationSummary[]> {
+  return request<ConversationSummary[]>(`/api/projects/${projectId}/chats`);
+}
+
+export function createProjectChat(
+  projectId: string,
+  payload: { title?: string; role: Role },
+): Promise<ConversationDetail> {
+  return request<ConversationDetail>(`/api/projects/${projectId}/chats`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function renameProjectChat(
+  projectId: string,
+  conversationId: string,
+  title: string,
+): Promise<ConversationDetail> {
+  return request<ConversationDetail>(
+    `/api/projects/${projectId}/chats/${conversationId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    },
+  );
+}
+
+export async function deleteProjectChat(
+  projectId: string,
+  conversationId: string,
+): Promise<void> {
+  await request<{ success: boolean }>(
+    `/api/projects/${projectId}/chats/${conversationId}`,
+    {
+      method: 'DELETE',
+    },
+  );
+}
+
+export async function uploadProjectManuals(
+  projectId: string,
+  files: File[],
+  embedRatio: number,
+  instructionText?: string,
+): Promise<ManualStats> {
+  const formData = new FormData();
+  files.forEach((file) => formData.append('files', file));
+  formData.append('embedRatio', embedRatio.toString());
+  if (instructionText?.trim()) {
+    formData.append('instructionText', instructionText.trim());
+  }
+  const response = await request<ManualStatsLike>(
+    `/api/projects/${projectId}/manuals`,
+    {
+      method: 'POST',
+      body: formData,
+    },
+  );
+  const normalized = normalizeManualStats(response);
+  if (!normalized) {
+    throw new Error('프로젝트 매뉴얼 정보를 불러오지 못했습니다.');
+  }
+  return normalized;
+}
+
+export async function fetchProjectManualStatus(
+  projectId: string,
+): Promise<ManualStats | null> {
+  const response = await request<ManualStatusResponse<ManualStatsLike>>(
+    `/api/projects/${projectId}/manuals/status`,
+  );
+  return response.hasManual
+    ? normalizeManualStats(response.stats ?? null)
+    : null;
+}
+
+export async function deleteProjectManualSource(
+  projectId: string,
+  sourceId: string,
+): Promise<ManualStats | null> {
+  const response = await request<ManualStatusResponse<ManualStatsLike>>(
+    `/api/projects/${projectId}/manuals/sources/${sourceId}`,
+    {
+      method: 'DELETE',
+    },
+  );
+  return response.hasManual
+    ? normalizeManualStats(response.stats ?? null)
+    : null;
 }

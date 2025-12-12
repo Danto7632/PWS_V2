@@ -73,9 +73,21 @@ export interface AuthResponse {
   token: string;
 }
 
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  description?: string | null;
+  instruction_text?: string | null;
+  created_at: string;
+  updated_at: string;
+  chat_count?: number;
+}
+
 export interface ConversationSummary {
   id: string;
+  project_id: string;
   title: string;
+  role: Role;
   created_at: string;
   updated_at: string;
 }
